@@ -92,6 +92,7 @@ impl Repo {
         let artifact_hash = match new.artifact {
             Some(path) => {
                 let bytes = std::fs::read(path).map_err(|e| Error::io(path, e))?;
+                let (bytes, _) = crate::redact::bytes(&bytes);
                 Some(self.objects().put(&bytes)?)
             }
             None => None,

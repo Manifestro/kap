@@ -111,6 +111,7 @@ impl Repo {
         }
 
         let mut artifact_hash = None;
+        let mut artifact_redacted = false;
         let mut path = None;
         if is_file_write(tool) {
             if let Some(file) = input
@@ -124,6 +125,10 @@ impl Repo {
                 if let Ok(metadata) = std::fs::metadata(file) {
                     if metadata.len() <= MAX_FILE_BYTES {
                         if let Ok(bytes) = std::fs::read(file) {
+                            // A file can hold a key as easily as a command's output can, and the
+                            // object store travels with `kap push`.
+                            let (bytes, redacted) = crate::redact::bytes(&bytes);
+                            artifact_redacted = redacted;
                             artifact_hash = Some(objects.put(&bytes)?);
                         }
                     }
@@ -137,7 +142,7 @@ impl Repo {
 
         let stdout = truncate(stdout);
         let stderr = truncate(stderr);
-        let redacted = command_redacted || stdout_redacted || stderr_redacted;
+        let redacted = command_redacted || stdout_redacted || stderr_redacted || artifact_redacted;
 
         let event = ToolEvent {
             id: event_id(attempt, input),

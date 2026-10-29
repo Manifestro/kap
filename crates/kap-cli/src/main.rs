@@ -8,7 +8,7 @@ use kap_core::decision::NewDecision;
 use kap_core::diff::AttemptDiff;
 use kap_core::evidence::{EvidenceSource, NewEvidence};
 use kap_core::hooks::HookInput;
-use kap_core::model::{Attempt, Decision, Evidence, Snapshot, ToolEvent};
+use kap_core::model::{Attempt, AttemptState, Decision, Evidence, Snapshot, ToolEvent};
 use kap_core::repo::Repo;
 use kap_core::review::Verdict;
 
@@ -536,13 +536,20 @@ fn run() -> Result<ExitCode, String> {
             match command {
                 SnapshotCommand::Create { attempt, note } => {
                     let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-                    let (snapshot, skipped) = repo
+                    let (snapshot, left_out) = repo
                         .create_snapshot(&attempt_id, note.as_deref())
                         .map_err(show)?;
                     print_snapshot(&snapshot);
-                    if skipped > 0 {
+                    if left_out.oversized > 0 {
                         println!(
-                            "  {skipped} file(s) over the size limit were left out of the snapshot"
+                            "  {} file(s) over the size limit were left out of the snapshot",
+                            left_out.oversized
+                        );
+                    }
+                    if left_out.credentials > 0 {
+                        println!(
+                            "  {} file(s) holding a credential were left out of the snapshot",
+                            left_out.credentials
                         );
                     }
                     Ok(ExitCode::SUCCESS)
@@ -748,22 +755,122 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
 
     // A hook must never break the agent's session. Outside a KAP repository there is nothing to
     // record, and inside one a failure is logged rather than shown to the agent.
-    let Ok(repo) = Repo::open(&cwd) else {
+    let input = HookInput::parse(&json).ok();
+    let Some((repo, attempt_id)) = locate_attempt(&cwd, input.as_ref(), &command) else {
+        if matches!(command, HookCommand::SessionStart) {
+            brief_outside_attempts(&cwd, input.as_ref());
+        }
         return Ok(ExitCode::SUCCESS);
     };
 
     if repo.kap_dir().join("disabled").exists() {
         return Ok(ExitCode::SUCCESS);
     }
-    let Some(attempt_id) = attempt_at(&repo, &cwd) else {
-        return Ok(ExitCode::SUCCESS);
-    };
 
     if let Err(message) = run_hook(&repo, &attempt_id, command, &json) {
         log_hook_failure(&repo, &message);
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// The attempt a hook event belongs to.
+///
+/// The hook process starts wherever the harness was launched, which is often the main checkout
+/// even while the agent works in an attempt's worktree. So the event itself decides: the
+/// directory it reports, then the file a write touched, then the process directory. A `Stop`
+/// that matches none of them still closes the attempt this session has been writing to.
+fn locate_attempt(
+    cwd: &Path,
+    input: Option<&HookInput>,
+    command: &HookCommand,
+) -> Option<(Repo, String)> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(input) = input {
+        if let Some(dir) = input.cwd.as_deref().filter(|dir| !dir.is_empty()) {
+            candidates.push(PathBuf::from(dir));
+        }
+        if let Some(file) = input
+            .tool_input
+            .get("file_path")
+            .and_then(|value| value.as_str())
+        {
+            if let Some(parent) = Path::new(file).parent() {
+                candidates.push(parent.to_path_buf());
+            }
+        }
+    }
+    candidates.push(cwd.to_path_buf());
+
+    let mut first_repo = None;
+    for dir in &candidates {
+        let Ok(repo) = Repo::open(dir) else {
+            continue;
+        };
+        if let Some(attempt_id) = attempt_at(&repo, dir) {
+            return Some((repo, attempt_id));
+        }
+        first_repo.get_or_insert(repo);
+    }
+
+    let repo = first_repo?;
+    if !matches!(command, HookCommand::Stop) {
+        return None;
+    }
+    let run = repo.db().ok()?.run_by_session(input?.session()).ok()??;
+    let attempt = repo.attempt(&run.attempt_id).ok()?;
+    if attempt.state != AttemptState::Open {
+        return None;
+    }
+    Some((repo, attempt.id))
+}
+
+/// Tell an agent that starts outside every attempt where its work would be recorded.
+///
+/// Without this, a session launched in the main checkout of a KAP repository records nothing and
+/// nobody notices until the history turns out to be empty.
+fn brief_outside_attempts(cwd: &Path, input: Option<&HookInput>) {
+    let dir = input
+        .and_then(|input| input.cwd.as_deref())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cwd.to_path_buf());
+    let Ok(repo) = Repo::open(&dir) else {
+        return;
+    };
+    if repo.kap_dir().join("disabled").exists() {
+        return;
+    }
+    let Ok(attempts) = repo.attempts() else {
+        return;
+    };
+    let open: Vec<_> = attempts
+        .iter()
+        .filter(|attempt| attempt.state == AttemptState::Open)
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+
+    let mut context = String::from(
+        "KAP records work only inside an attempt's worktree, and this session is outside every \
+         one. Commands run here are not recorded; files written under a worktree are. Open \
+         attempts:\n",
+    );
+    for attempt in open.iter().take(5) {
+        context.push_str(&format!(
+            "- {} ({}) at {}\n",
+            attempt.id,
+            attempt.label,
+            attempt.worktree.display()
+        ));
+    }
+    let payload = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    });
+    println!("{payload}");
 }
 
 fn run_hook(repo: &Repo, attempt_id: &str, command: HookCommand, json: &str) -> Result<(), String> {
@@ -799,6 +906,15 @@ fn run_hook(repo: &Repo, attempt_id: &str, command: HookCommand, json: &str) -> 
                     &format!(
                         "snapshot skipped {} file(s) over the size limit",
                         report.skipped
+                    ),
+                );
+            }
+            if report.hash_only > 0 {
+                log_hook_failure(
+                    repo,
+                    &format!(
+                        "snapshot kept only the hash of {} large file(s) that changed again",
+                        report.hash_only
                     ),
                 );
             }

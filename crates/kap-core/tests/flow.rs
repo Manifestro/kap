@@ -761,10 +761,10 @@ fn a_snapshot_restores_as_a_new_attempt() {
     fs::write(attempt.worktree.join("README.md"), "# changed\n").expect("modify README");
     fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write calc");
 
-    let (snapshot, skipped) = repo
+    let (snapshot, left_out) = repo
         .create_snapshot(&attempt.id, Some("before the refactor"))
         .expect("snapshot");
-    assert_eq!(skipped, 0);
+    assert_eq!(left_out, kap_core::snapshot::LeftOut::default());
     assert_eq!(snapshot.note.as_deref(), Some("before the refactor"));
     assert_eq!(
         repo.snapshots(&attempt.id).expect("list snapshots").len(),
@@ -1210,4 +1210,88 @@ fn secrets_are_redacted_before_they_are_stored() {
         "secret reached the store: {stored}"
     );
     assert!(stored.contains("[REDACTED]"));
+}
+
+#[test]
+fn a_file_with_a_credential_is_redacted_in_the_store_and_kept_out_of_snapshots() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "file-secret",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    let secret = "Zq81mXk20Lp3nV7cQ0w9";
+    fs::write(
+        attempt.worktree.join("pod.env.sh"),
+        format!("export RUNPOD_API_KEY={secret}\n"),
+    )
+    .expect("write secret file");
+    fs::write(attempt.worktree.join("notes.md"), "plain\n").expect("write plain file");
+
+    repo.record_worktree_snapshot(&attempt).expect("snapshot");
+    for entry in walk(&repo.kap_dir().join("objects")) {
+        let bytes = fs::read(&entry).expect("read object");
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(secret),
+            "secret reached the object store"
+        );
+    }
+
+    let (snapshot, left_out) = repo
+        .create_snapshot(&attempt.id, None)
+        .expect("create snapshot");
+    assert_eq!(left_out.credentials, 1);
+    let files = git(
+        &attempt.worktree,
+        &["ls-tree", "-r", "--name-only", &snapshot.commit],
+    );
+    assert!(files.contains("notes.md"));
+    assert!(
+        !files.contains("pod.env.sh"),
+        "secret file in snapshot: {files}"
+    );
+}
+
+#[test]
+fn a_large_file_that_keeps_changing_is_stored_once() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "growing-log",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    let log = attempt.worktree.join("train.log");
+    let mut content = vec![b'x'; 2 * 1024 * 1024];
+
+    for turn in 0..3 {
+        content.extend_from_slice(format!("turn {turn}\n").as_bytes());
+        fs::write(&log, &content).expect("write log");
+        let report = repo.record_worktree_snapshot(&attempt).expect("snapshot");
+        assert_eq!(report.recorded, 1);
+        assert_eq!(report.hash_only, usize::from(turn > 0));
+    }
+
+    let evidence = repo.evidence(&attempt.id).expect("list evidence");
+    assert_eq!(evidence.len(), 3);
+    assert!(evidence[0].complete);
+    assert!(!evidence[1].complete && !evidence[2].complete);
+    let stored = walk(&repo.kap_dir().join("objects")).len();
+    assert_eq!(stored, 1, "only the first version keeps its content");
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
 }

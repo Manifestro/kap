@@ -12,12 +12,28 @@ use crate::repo::Repo;
 const MAX_SNAPSHOT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SNAPSHOT_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Above this size only the first version of a changed file keeps its content. A log rewritten on
+/// every turn would otherwise be copied whole on every Stop; later versions record the hash alone.
+const MAX_HISTORY_FILE_BYTES: u64 = 1024 * 1024;
+
 /// What one snapshot pass recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotReport {
     pub recorded: usize,
     /// Files left out because they were too large.
     pub skipped: usize,
+    /// Large files that changed again: their hash is recorded, their content is not.
+    pub hash_only: usize,
+}
+
+/// Files a snapshot left in the worktree instead of writing them into git.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    /// Over the size limit.
+    pub oversized: usize,
+    /// Holding something shaped like a credential. Git objects cannot be redacted after the
+    /// fact, and snapshot refs travel with `kap push`, so these stay out entirely.
+    pub credentials: usize,
 }
 
 /// What `clean_attempt` removed.
@@ -38,7 +54,7 @@ impl Repo {
         &self,
         attempt_id: &str,
         note: Option<&str>,
-    ) -> Result<(Snapshot, usize)> {
+    ) -> Result<(Snapshot, LeftOut)> {
         let attempt = self.db()?.attempt(attempt_id)?;
         let git = self.git()?;
         let id = format!("snapshot-{}", new_id());
@@ -52,20 +68,24 @@ impl Repo {
         let worktree = attempt.worktree.clone();
         git.run_in_with_env(&worktree, &["read-tree", "HEAD"], &env)?;
 
-        // A snapshot must not swallow a checkpoint or a log. Files over the limit stay in the
+        // A snapshot must not swallow a checkpoint, a log, or a key. Such files stay in the
         // worktree, outside the snapshot, and are counted so the caller can say so.
-        let skipped = oversized_paths(&git, &worktree)?;
-        let mut add: Vec<String> = Vec::new();
-        if !skipped.is_empty() {
-            let excludes = tmp_dir.join("snapshot-excludes");
-            fs::write(&excludes, skipped.join("\n")).map_err(|e| Error::io(&excludes, e))?;
-            add.push("-c".to_string());
-            add.push(format!("core.excludesFile={}", excludes.display()));
+        let (excluded, left_out) = excluded_paths(&git, &worktree)?;
+        // Exclusions go in as literal pathspecs: they also hold back a tracked file's new
+        // content, and a path with glob characters in it means only itself.
+        let pathspecs = tmp_dir.join(format!("pathspecs-{id}"));
+        let mut list = String::from(".\0");
+        for path in &excluded {
+            list.push_str(&format!(":(exclude,literal){path}\0"));
         }
-        add.push("add".to_string());
-        add.push("-A".to_string());
-        let add_args: Vec<&str> = add.iter().map(String::as_str).collect();
-        git.run_in_with_env(&worktree, &add_args, &env)?;
+        fs::write(&pathspecs, list).map_err(|e| Error::io(&pathspecs, e))?;
+        let from_file = format!("--pathspec-from-file={}", pathspecs.display());
+        git.run_in_with_env(
+            &worktree,
+            &["add", "-A", &from_file, "--pathspec-file-nul"],
+            &env,
+        )?;
+        let _ = fs::remove_file(&pathspecs);
         let tree = git
             .run_in_with_env(&worktree, &["write-tree"], &env)?
             .trim()
@@ -106,7 +126,7 @@ impl Repo {
             created_at: now_rfc3339(),
         };
         self.db()?.insert_snapshot(&snapshot)?;
-        Ok((snapshot, skipped.len()))
+        Ok((snapshot, left_out))
     }
 
     /// Snapshots of an attempt, oldest first.
@@ -198,6 +218,7 @@ impl Repo {
         let db = self.db()?;
         let mut recorded = 0;
         let mut skipped = 0;
+        let mut hash_only = 0;
         let mut budget = MAX_SNAPSHOT_TOTAL_BYTES;
 
         for line in status.lines() {
@@ -222,14 +243,23 @@ impl Repo {
             };
             budget = budget.saturating_sub(metadata.len());
 
-            let hash = objects.put(&bytes)?;
+            let (bytes, _) = crate::redact::bytes(&bytes);
+            let hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
             // Same content, however it got here: the hook may have recorded this file under a
             // different path, and a snapshot must not duplicate it.
             if db.evidence_has_hash(&attempt.id, &hash)? {
                 continue;
             }
-            if db.last_evidence_hash(&attempt.id, &path)?.as_deref() == Some(hash.as_str()) {
+            let previous = db.last_evidence_hash(&attempt.id, &path)?;
+            if previous.as_deref() == Some(hash.as_str()) {
                 continue;
+            }
+
+            let keep_content = previous.is_none() || metadata.len() <= MAX_HISTORY_FILE_BYTES;
+            if keep_content {
+                objects.put(&bytes)?;
+            } else {
+                hash_only += 1;
             }
 
             db.insert_evidence(&Evidence {
@@ -242,36 +272,51 @@ impl Repo {
                 artifact_hash: Some(hash),
                 path: Some(path),
                 observed: true,
-                complete: true,
+                complete: keep_content,
                 recorded_at: now_rfc3339(),
             })?;
             recorded += 1;
         }
 
-        Ok(SnapshotReport { recorded, skipped })
+        Ok(SnapshotReport {
+            recorded,
+            skipped,
+            hash_only,
+        })
     }
 }
 
-/// The path from one `git status --porcelain` line, following renames to the new path.
-/// Files in the worktree that are too large to belong in a snapshot.
-fn oversized_paths(git: &Git, worktree: &Path) -> Result<Vec<String>> {
+/// Files in the worktree that do not belong in a snapshot: too large, or holding a credential.
+fn excluded_paths(git: &Git, worktree: &Path) -> Result<(Vec<String>, LeftOut)> {
     let mut paths = Vec::new();
+    let mut left_out = LeftOut::default();
 
     for line in git.status_porcelain_all(worktree)?.lines() {
         let Some(path) = status_path(line) else {
             continue;
         };
 
-        if let Ok(metadata) = fs::metadata(worktree.join(&path)) {
-            if metadata.is_file() && metadata.len() > MAX_SNAPSHOT_FILE_BYTES {
-                paths.push(path);
-            }
+        let full = worktree.join(&path);
+        let Ok(metadata) = fs::metadata(&full) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+
+        if metadata.len() > MAX_SNAPSHOT_FILE_BYTES {
+            left_out.oversized += 1;
+            paths.push(path);
+        } else if fs::read(&full).is_ok_and(|bytes| crate::redact::bytes(&bytes).1) {
+            left_out.credentials += 1;
+            paths.push(path);
         }
     }
 
-    Ok(paths)
+    Ok((paths, left_out))
 }
 
+/// The path from one `git status --porcelain` line, following renames to the new path.
 fn status_path(line: &str) -> Option<String> {
     if line.len() < 4 {
         return None;
