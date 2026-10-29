@@ -5,6 +5,7 @@
 Git records *what* changed. KAP records *why*.
 
 [![CI](https://github.com/Manifestro/kap/actions/workflows/ci.yml/badge.svg)](https://github.com/Manifestro/kap/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/kap-cli.svg)](https://crates.io/crates/kap-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **Status: pre-alpha.** The loop works end to end with Claude Code: attempts, recorded commands and
