@@ -111,6 +111,16 @@ cd kap
 cargo install --path crates/kap-cli   # installs `kap` into ~/.cargo/bin
 ```
 
+The crates are published as [`kap-cli`](https://crates.io/crates/kap-cli) and
+[`kap-core`](https://crates.io/crates/kap-core):
+
+```sh
+cargo install kap-cli
+```
+
+> The `kap` package on crates.io is an unrelated project. Installing this one means `kap-cli`; it
+> installs the `kap` binary.
+
 Then, inside a git repository that has at least one commit:
 
 ```sh

@@ -48,8 +48,29 @@ curl -L https://github.com/Manifestro/kap/releases/latest/download/kap-aarch64-a
 
 Or from source: `cargo install --git https://github.com/Manifestro/kap --locked`.
 
+## Publishing to crates.io
+
+The package names are `kap-core` and `kap-cli`; both are free. The `kap` package name belongs to an
+unrelated project, so it is never used — the binary is still called `kap`.
+
+Publishing is manual and needs a token (`cargo login`), because the upload is an identity-bound
+action:
+
+```sh
+cargo publish -p kap-core     # first: kap-cli depends on it by version
+cargo publish -p kap-cli
+```
+
+`cargo publish` strips path dependencies, so `kap-core` must exist on crates.io before `kap-cli`
+can be published. The working tree must be clean.
+
+If something is wrong with a published version, yank it rather than deleting anything:
+
+```sh
+cargo yank --version 0.1.0 kap-cli
+```
+
 ## What is not automated
 
-- The crates are not published to crates.io. That needs a token and a decision about names; until
-  then, install from git or from the release archives.
-- There is no Homebrew formula and no package registry.
+- crates.io publishing is manual (token, order, and no way to undo an upload).
+- There is no Homebrew formula and no other package registry.
