@@ -15,6 +15,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recording can be switched off without uninstalling: `KAP_DISABLED=1` for one session, `kap
   disable` and `kap enable` for a repository.
 
+### Fixed
+
+- `kap init` outside a repository reported `.` instead of the resolved directory.
+- Starting an attempt in a repository with no commits leaked git's "ambiguous argument 'HEAD'";
+  it now says that an initial commit is needed.
+
 ## [0.1.1] - 2026-10-29
 
 ### Fixed
