@@ -37,6 +37,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
 fn repository_with_commit() -> (tempfile::TempDir, Repo) {
     let dir = tempfile::tempdir().expect("create temp dir");
     git(dir.path(), &["init"]);
+    // Merge commits are made by KAP itself, so the repository needs an identity of its own.
+    git(dir.path(), &["config", "user.name", "KAP Test"]);
+    git(dir.path(), &["config", "user.email", "test@example.com"]);
     fs::write(dir.path().join("README.md"), "# test\n").expect("write README");
     git(dir.path(), &["add", "README.md"]);
     git(dir.path(), &["commit", "-m", "initial"]);
