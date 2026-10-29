@@ -34,3 +34,17 @@ jobs:
 
       - name: Tests
         run: cargo test --all
+
+  installer:
+    name: install.sh on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the latest release and run it
+        run: |
+          sh -n install.sh
+          KAP_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh
+          "$RUNNER_TEMP/bin/kap" --version

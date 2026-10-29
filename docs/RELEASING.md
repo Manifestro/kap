@@ -42,9 +42,11 @@ release.
 ## Installing a release
 
 ```sh
-curl -L https://github.com/Manifestro/kap/releases/latest/download/kap-aarch64-apple-darwin.tar.gz \
-  | tar -xz -C ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/Manifestro/kap/main/install.sh | sh
 ```
+
+`install.sh` reads the asset names this workflow produces (`kap-<target>.tar.gz` and its
+`.sha256`); renaming them breaks it, and CI's installer job runs it against the latest release.
 
 Or from source: `cargo install --git https://github.com/Manifestro/kap --locked`.
 

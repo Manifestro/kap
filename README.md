@@ -111,9 +111,18 @@ recorded, the state can be snapshotted and restored, and the result is merged on
 
 ## Getting started
 
-Prebuilt binaries for macOS (Apple silicon and Intel) and Linux x86_64 are attached to every
-[release](https://github.com/Manifestro/kap/releases). Or build from source — you need
-[Rust](https://rustup.rs/) and `git`:
+One command, no Rust needed — macOS (Apple silicon and Intel) and Linux x86_64:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Manifestro/kap/main/install.sh | sh
+```
+
+The script picks the binary for your platform from the latest
+[release](https://github.com/Manifestro/kap/releases), checks its SHA-256, and puts `kap` in
+`~/.local/bin`. `KAP_VERSION=0.1.4` pins a release, `KAP_INSTALL_DIR` installs elsewhere, and
+running it again upgrades in place. Then `kap install` wires up the Claude Code hooks.
+
+Or build from source — you need [Rust](https://rustup.rs/) and `git`:
 
 ```sh
 git clone https://github.com/Manifestro/kap.git

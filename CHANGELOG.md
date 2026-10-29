@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `install.sh` installs the release binary for the platform with one `curl … | sh`, checking its
+  SHA-256; no Rust toolchain needed. CI runs it on Linux and macOS.
+
 ## [0.1.4] - 2026-10-30
 
 ### Added
