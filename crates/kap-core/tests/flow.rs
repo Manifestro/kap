@@ -741,3 +741,78 @@ fn commits_after_approval_invalidate_the_review() {
         other => panic!("expected MergeStaleReview, got {other:?}"),
     }
 }
+
+#[test]
+fn a_snapshot_restores_as_a_new_attempt() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "work",
+            task: Some("finish the parser"),
+            base: None,
+        })
+        .expect("start attempt");
+
+    // One modified tracked file and one untracked file: a snapshot must keep both.
+    fs::write(attempt.worktree.join("README.md"), "# changed\n").expect("modify README");
+    fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write calc");
+
+    let snapshot = repo
+        .create_snapshot(&attempt.id, Some("before the refactor"))
+        .expect("snapshot");
+    assert_eq!(snapshot.note.as_deref(), Some("before the refactor"));
+    assert_eq!(
+        repo.snapshots(&attempt.id).expect("list snapshots").len(),
+        1
+    );
+
+    // The snapshot did not move the attempt's branch.
+    assert_eq!(
+        repo.attempt(&attempt.id).expect("reload").base_commit,
+        attempt.base_commit
+    );
+
+    let restored = repo
+        .restore_snapshot(&snapshot.id)
+        .expect("restore snapshot");
+    assert_ne!(restored.id, attempt.id);
+    assert_eq!(restored.base_commit, snapshot.commit);
+    assert_eq!(restored.label, "work-restored");
+    assert_eq!(
+        fs::read_to_string(restored.worktree.join("README.md")).expect("read README"),
+        "# changed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(restored.worktree.join("calc.py")).expect("read calc"),
+        "print(1)\n"
+    );
+
+    // The original worktree is untouched.
+    assert!(attempt.worktree.is_dir());
+}
+
+#[test]
+fn cleaning_removes_a_closed_attempt_but_keeps_its_branch() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "cleanup",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    match repo.clean_attempt(&attempt.id) {
+        Err(Error::AttemptOpen { .. }) => {}
+        other => panic!("expected AttemptOpen, got {other:?}"),
+    }
+
+    repo.close_attempt(&attempt.id).expect("close");
+    repo.clean_attempt(&attempt.id).expect("clean");
+    assert!(!attempt.worktree.exists());
+    assert!(repo
+        .git()
+        .expect("git")
+        .branch_exists(&attempt.branch)
+        .expect("branch lookup"));
+}

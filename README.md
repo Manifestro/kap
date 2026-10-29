@@ -77,8 +77,8 @@ it and the evidence that backs it.
 
 ## Status
 
-Pre-alpha. The recording half works: an attempt gets its own branch and worktree, commands and
-decisions are recorded as they happen, and two attempts can be compared before anything is merged.
+Pre-alpha. The loop is closed: an attempt gets its own branch and worktree, what happens inside is
+recorded, the state can be snapshotted and restored, and the result is merged only through a review.
 
 - [x] Repository, license, and contribution guide
 - [x] Architecture and core concepts documented
@@ -89,7 +89,7 @@ decisions are recorded as they happen, and two attempts can be compared before a
 - [x] Decisions: `kap decision add` records rationale and rejected alternatives
 - [x] Closing an attempt and comparing two attempts with `kap diff`
 - [x] Evidence attached to decisions, marked observed or merely reported
-- [ ] Snapshots and restore
+- [x] Snapshots and restore: `kap snapshot create|list|restore`, plus `kap attempt clean`
 - [x] Claude Code adapter through hooks: session briefing, tool events, and a stop-time snapshot
 - [x] Review-gated merge: `kap review` records a verdict, `kap merge` obeys it
 - [ ] Codex adapter and a documented adapter interface for other agents
@@ -172,6 +172,17 @@ kap merge attempt-…                       # merges it and closes the attempt
 Merging is gated on a review, and the review is pinned to a commit: if the attempt moves after it
 was approved, the approval no longer applies and the merge is refused. `kap attempt close` freezes
 an attempt you do not intend to merge.
+
+Snapshots capture the whole worktree — tracked and untracked files — without moving the attempt's
+branch, so taking one never invalidates a review. Restoring never overwrites the original: it opens
+a new attempt from the snapshot, and both stay in the history.
+
+```sh
+kap snapshot create --note "before the refactor"
+kap snapshot list
+kap snapshot restore snapshot-…            # a new attempt, original untouched
+kap attempt close && kap attempt clean     # drop the worktree, keep the branch
+```
 
 
 ## Repository layout

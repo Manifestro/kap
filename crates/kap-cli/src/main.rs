@@ -8,7 +8,7 @@ use kap_core::decision::NewDecision;
 use kap_core::diff::AttemptDiff;
 use kap_core::evidence::{EvidenceSource, NewEvidence};
 use kap_core::hooks::HookInput;
-use kap_core::model::{Attempt, Decision, Evidence, ToolEvent};
+use kap_core::model::{Attempt, Decision, Evidence, Snapshot, ToolEvent};
 use kap_core::repo::Repo;
 use kap_core::review::Verdict;
 
@@ -66,6 +66,11 @@ enum Command {
         #[command(subcommand)]
         command: EvidenceCommand,
     },
+    /// Capture and restore the state of an attempt
+    Snapshot {
+        #[command(subcommand)]
+        command: SnapshotCommand,
+    },
     /// Inspect an attempt and record a verdict
     Review {
         /// The attempt to review
@@ -107,6 +112,12 @@ enum AttemptCommand {
         #[arg(long, value_name = "REV")]
         base: Option<String>,
     },
+    /// Remove the worktree of a closed attempt
+    Clean {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+    },
     /// Close an attempt and freeze its history
     Close {
         /// Attempt id (inferred from the worktree you are in when omitted)
@@ -139,6 +150,30 @@ enum DecisionCommand {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SnapshotCommand {
+    /// Capture the current state of an attempt
+    Create {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+        /// Note to remember the snapshot by
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// List snapshots of an attempt
+    List {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+    },
+    /// Restore a snapshot as a new attempt
+    Restore {
+        /// Snapshot id
+        snapshot: String,
     },
 }
 
@@ -241,6 +276,12 @@ fn run() -> Result<ExitCode, String> {
                         })
                         .map_err(show)?;
                     print_attempt(&attempt);
+                    Ok(ExitCode::SUCCESS)
+                }
+                AttemptCommand::Clean { attempt } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    repo.clean_attempt(&attempt_id).map_err(show)?;
+                    println!("Removed the worktree of {attempt_id}; its branch is kept.");
                     Ok(ExitCode::SUCCESS)
                 }
                 AttemptCommand::Close { attempt } => {
@@ -364,6 +405,38 @@ fn run() -> Result<ExitCode, String> {
                     for entry in &evidence {
                         print_evidence(entry);
                     }
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
+        }
+
+        Command::Snapshot { command } => {
+            let repo = open_repo()?;
+            match command {
+                SnapshotCommand::Create { attempt, note } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let snapshot = repo
+                        .create_snapshot(&attempt_id, note.as_deref())
+                        .map_err(show)?;
+                    print_snapshot(&snapshot);
+                    Ok(ExitCode::SUCCESS)
+                }
+                SnapshotCommand::List { attempt } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let snapshots = repo.snapshots(&attempt_id).map_err(show)?;
+                    if snapshots.is_empty() {
+                        println!("No snapshots for {attempt_id}.");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    for snapshot in &snapshots {
+                        print_snapshot(snapshot);
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                SnapshotCommand::Restore { snapshot } => {
+                    let attempt = repo.restore_snapshot(&snapshot).map_err(show)?;
+                    println!("Restored {snapshot} as a new attempt:");
+                    print_attempt(&attempt);
                     Ok(ExitCode::SUCCESS)
                 }
             }
@@ -627,6 +700,18 @@ fn print_evidence(evidence: &Evidence) {
     }
     if let Some(decision) = &evidence.decision_id {
         println!("  decision: {decision}");
+    }
+}
+
+fn print_snapshot(snapshot: &Snapshot) {
+    println!(
+        "{}  {}  {}",
+        snapshot.id,
+        short_commit(&snapshot.commit),
+        snapshot.created_at
+    );
+    if let Some(note) = &snapshot.note {
+        println!("  note: {note}");
     }
 }
 

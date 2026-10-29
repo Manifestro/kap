@@ -55,6 +55,12 @@ pub enum Error {
     #[error("decision `{id}` not found for attempt `{attempt}`")]
     DecisionNotFound { id: String, attempt: String },
 
+    #[error("attempt `{id}` is still open; close it before cleaning up")]
+    AttemptOpen { id: String },
+
+    #[error("snapshot `{id}` not found")]
+    SnapshotNotFound { id: String },
+
     #[error("attempt `{id}` is closed; its history is frozen")]
     AttemptClosed { id: String },
 

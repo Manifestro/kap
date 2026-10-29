@@ -138,6 +138,35 @@ impl Git {
             .filter(|name| !name.is_empty())
     }
 
+    /// Run git inside a working tree with extra environment variables.
+    pub fn run_in_with_env(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<String> {
+        let mut command = Command::new("git");
+        command.args(args).current_dir(dir);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+
+        let output = command.output().map_err(Error::GitMissing)?;
+        if !output.status.success() {
+            return Err(Error::Git {
+                command: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Point a ref at a commit.
+    pub fn update_ref(&self, reference: &str, commit: &str) -> Result<()> {
+        self.run(&["update-ref", reference, commit])?;
+        Ok(())
+    }
+
     /// Changed paths in a working tree, including untracked files.
     pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
         self.run_in(dir, &["status", "--porcelain"])

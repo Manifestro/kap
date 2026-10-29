@@ -133,3 +133,13 @@ pub struct Review {
     pub note: Option<String>,
     pub created_at: String,
 }
+
+/// A restorable state of an attempt at a point in time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    pub id: String,
+    pub attempt_id: String,
+    pub commit: String,
+    pub note: Option<String>,
+    pub created_at: String,
+}

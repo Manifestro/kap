@@ -210,17 +210,18 @@ An adapter must never be required for reading history.
 kap init                     # create .kap/ in a repository                        [done]
 kap attempt start            # open a new attempt (worktree + branch)              [done]
 kap attempt close            # close an attempt and freeze its history          [done]
+kap attempt clean            # drop a closed attempt's worktree, keep its branch [done]
 kap attempt list             # list attempts and their state                      [done]
 kap exec -- <command>        # run a command inside an attempt and record it      [done]
 kap log                      # timeline of commands and decisions                 [done]
 kap decision add             # record a decision with rationale and alternatives  [done]
 kap decision list            # decisions recorded for an attempt                  [done]
 kap evidence attach          # attach an artifact as evidence                 [done]
-kap snapshot                 # snapshot the current state of an attempt
+kap snapshot create|list     # capture the worktree without moving the branch    [done]
 kap diff <a> <b>             # compare two attempts                              [done]
 kap review <attempt>         # inspect diff + evidence, record a verdict        [done]
 kap merge <attempt>          # merge an attempt, only after review               [done]
-kap restore <snapshot>       # restore a recorded state
+kap snapshot restore <id>    # open a new attempt from a snapshot                [done]
 kap push / kap pull          # sync KAP objects with a remote
 ```
 

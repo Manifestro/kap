@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
-use crate::model::{Attempt, AttemptState, Decision, Evidence, Review, Run, ToolEvent};
+use crate::model::{Attempt, AttemptState, Decision, Evidence, Review, Run, Snapshot, ToolEvent};
 
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
@@ -12,6 +12,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_run_sessions.sql"),
     include_str!("../migrations/0004_evidence_paths.sql"),
     include_str!("../migrations/0005_reviews.sql"),
+    include_str!("../migrations/0006_snapshots.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -391,6 +392,74 @@ impl Db {
             .optional()
             .map_err(|e| Error::db(&self.path, e))?;
         Ok(review)
+    }
+
+    /// Record a snapshot.
+    pub fn insert_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO snapshots (id, attempt_id, commit_id, note, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    snapshot.id,
+                    snapshot.attempt_id,
+                    snapshot.commit,
+                    snapshot.note,
+                    snapshot.created_at,
+                ],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// Snapshots of an attempt, oldest first.
+    pub fn snapshots(&self, attempt_id: &str) -> Result<Vec<Snapshot>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT id, attempt_id, commit_id, note, created_at FROM snapshots \
+                 WHERE attempt_id = ?1 ORDER BY created_at ASC, id ASC",
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+
+        let rows = statement
+            .query_map([attempt_id], |row| {
+                Ok(Snapshot {
+                    id: row.get("id")?,
+                    attempt_id: row.get("attempt_id")?,
+                    commit: row.get("commit_id")?,
+                    note: row.get("note")?,
+                    created_at: row.get("created_at")?,
+                })
+            })
+            .map_err(|e| Error::db(&self.path, e))?;
+
+        let mut snapshots = Vec::new();
+        for row in rows {
+            snapshots.push(row.map_err(|e| Error::db(&self.path, e))?);
+        }
+        Ok(snapshots)
+    }
+
+    /// One snapshot by id.
+    pub fn snapshot(&self, id: &str) -> Result<Snapshot> {
+        self.conn
+            .query_row(
+                "SELECT id, attempt_id, commit_id, note, created_at FROM snapshots WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(Snapshot {
+                        id: row.get("id")?,
+                        attempt_id: row.get("attempt_id")?,
+                        commit: row.get("commit_id")?,
+                        note: row.get("note")?,
+                        created_at: row.get("created_at")?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))?
+            .ok_or_else(|| Error::SnapshotNotFound { id: id.to_string() })
     }
 
     fn migrate(&self) -> Result<()> {
