@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "kap-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "kap-core",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "kap-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "rusqlite",

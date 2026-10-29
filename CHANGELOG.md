@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-29
+
 ### Fixed
 
 - Merging failed when the checkout held any untracked file, including files unrelated to the
@@ -71,5 +73,6 @@ shared with another machine.
 - Append-only SQLite schema with versioned migrations, and a CI job that runs formatting, lints, and
   tests on every push and pull request.
 
-[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Manifestro/kap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Manifestro/kap/releases/tag/v0.1.0
