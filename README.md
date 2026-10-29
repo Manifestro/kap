@@ -176,6 +176,13 @@ and other hooks are left untouched — and `kap uninstall` removes exactly what 
 Recording still happens only inside an attempt worktree (`kap attempt start`); outside one the hooks
 do nothing.
 
+Any other CLI that fires the same hook events can be attached the same way, by pointing at its
+settings file:
+
+```sh
+kap install --settings ~/.other-cli/settings.json
+```
+
 Turn it off when you do not want a session recorded:
 
 | Scope | How |

@@ -15,6 +15,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recording can be switched off without uninstalling: `KAP_DISABLED=1` for one session, `kap
   disable` and `kap enable` for a repository.
 
+### Changed
+
+- A run no longer records which harness produced it. KAP talks to hooks, not to Claude Code: any
+  CLI that fires the same events is equally supported. Migration 0009 drops the column.
+- `kap install --settings <path>` writes the hooks into any Claude-compatible settings file, so
+  another hook-compatible CLI can be attached without KAP knowing anything about it.
+
 ### Fixed
 
 - `kap init` outside a repository reported `.` instead of the resolved directory.

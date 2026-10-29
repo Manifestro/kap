@@ -59,9 +59,17 @@ enum Command {
         attempt: Option<String>,
     },
     /// Install KAP's hooks for every project on this machine
-    Install,
+    Install {
+        /// Write into this Claude-compatible settings file instead of ~/.claude/settings.json
+        #[arg(long, value_name = "PATH")]
+        settings: Option<PathBuf>,
+    },
     /// Remove the hooks installed by `kap install`
-    Uninstall,
+    Uninstall {
+        /// The settings file to clean, instead of ~/.claude/settings.json
+        #[arg(long, value_name = "PATH")]
+        settings: Option<PathBuf>,
+    },
     /// Stop recording in this repository
     Disable,
     /// Resume recording in this repository
@@ -452,8 +460,8 @@ fn run() -> Result<ExitCode, String> {
             }
         }
 
-        Command::Install => {
-            let path = install_hooks()?;
+        Command::Install { settings } => {
+            let path = install_hooks(settings.as_deref())?;
             println!("Installed KAP hooks in {}", path.display());
             println!("They stay out of the way outside a KAP repository.");
             println!();
@@ -464,8 +472,8 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Uninstall => {
-            let path = remove_hooks()?;
+        Command::Uninstall { settings } => {
+            let path = remove_hooks(settings.as_deref())?;
             println!("Removed KAP hooks from {}", path.display());
             Ok(ExitCode::SUCCESS)
         }
@@ -820,15 +828,21 @@ fn claude_settings_path() -> Result<PathBuf, String> {
 }
 
 /// Install the hooks once per user, so no project or worktree needs its own setup.
-fn install_hooks() -> Result<PathBuf, String> {
-    let path = claude_settings_path()?;
+fn install_hooks(settings: Option<&Path>) -> Result<PathBuf, String> {
+    let path = match settings {
+        Some(path) => path.to_path_buf(),
+        None => claude_settings_path()?,
+    };
     wire_hooks(&path)?;
     Ok(path)
 }
 
 /// Remove only the hooks KAP added, leaving every other setting untouched.
-fn remove_hooks() -> Result<PathBuf, String> {
-    let path = claude_settings_path()?;
+fn remove_hooks(settings: Option<&Path>) -> Result<PathBuf, String> {
+    let path = match settings {
+        Some(path) => path.to_path_buf(),
+        None => claude_settings_path()?,
+    };
     unwire_hooks(&path)?;
     Ok(path)
 }

@@ -55,25 +55,12 @@ impl HookInput {
     }
 }
 
-/// The agent name recorded for Claude Code hook sessions.
-pub const CLAUDE_CODE: &str = "claude-code";
-
 impl Repo {
     /// The run for a harness session, created on first sight.
     ///
     /// A run outlives individual hook events: every tool call in a session belongs to it, even if
     /// the session started before the hooks were installed.
     pub fn run_for_session(&self, attempt_id: &str, session_id: &str) -> Result<Run> {
-        self.run_for_session_as(attempt_id, session_id, CLAUDE_CODE)
-    }
-
-    /// The run for a harness session, recorded under a specific agent name.
-    pub fn run_for_session_as(
-        &self,
-        attempt_id: &str,
-        session_id: &str,
-        agent: &str,
-    ) -> Result<Run> {
         let db = self.db()?;
         if let Some(run) = db.run_by_session(session_id)? {
             return Ok(run);
@@ -82,7 +69,6 @@ impl Repo {
         let run = Run {
             id: format!("run-{}", new_id()),
             attempt_id: attempt_id.to_string(),
-            agent: agent.to_string(),
             session_id: Some(session_id.to_string()),
             status: "running".to_string(),
             started_at: now_rfc3339(),

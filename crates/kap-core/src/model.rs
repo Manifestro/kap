@@ -118,7 +118,6 @@ pub struct Evidence {
 pub struct Run {
     pub id: String,
     pub attempt_id: String,
-    pub agent: String,
     pub session_id: Option<String>,
     pub status: String,
     pub started_at: String,

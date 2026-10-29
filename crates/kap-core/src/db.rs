@@ -27,7 +27,6 @@ const TABLES: &[(&str, &[&str])] = &[
         &[
             "id",
             "attempt_id",
-            "agent",
             "session_id",
             "status",
             "started_at",
@@ -117,6 +116,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_snapshots.sql"),
     include_str!("../migrations/0007_meta.sql"),
     include_str!("../migrations/0008_subagents.sql"),
+    include_str!("../migrations/0009_drop_runs_agent.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -402,12 +402,11 @@ impl Db {
     pub fn insert_run(&self, run: &Run) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO runs (id, attempt_id, agent, session_id, status, started_at, \
-                 finished_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO runs (id, attempt_id, session_id, status, started_at, finished_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     run.id,
                     run.attempt_id,
-                    run.agent,
                     run.session_id,
                     run.status,
                     run.started_at,
@@ -423,14 +422,13 @@ impl Db {
         let run = self
             .conn
             .query_row(
-                "SELECT id, attempt_id, agent, session_id, status, started_at, finished_at \
+                "SELECT id, attempt_id, session_id, status, started_at, finished_at \
                  FROM runs WHERE session_id = ?1",
                 [session_id],
                 |row| {
                     Ok(Run {
                         id: row.get("id")?,
                         attempt_id: row.get("attempt_id")?,
-                        agent: row.get("agent")?,
                         session_id: row.get("session_id")?,
                         status: row.get("status")?,
                         started_at: row.get("started_at")?,
