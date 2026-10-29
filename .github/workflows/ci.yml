@@ -29,6 +29,8 @@ jobs:
 
       - name: Documentation
         run: cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: -D warnings
 
       - name: Tests
         run: cargo test --all
