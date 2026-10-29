@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `kap install` adds the Claude Code hooks to `~/.claude/settings.json` once per machine, instead of
+  a per-worktree `kap hook setup`. It preserves existing settings and other hooks, and
+  `kap uninstall` removes only what it added.
+- Recording can be switched off without uninstalling: `KAP_DISABLED=1` for one session, `kap
+  disable` and `kap enable` for a repository.
+- `kap import dsh` imports DeepSeek Harness sessions: commands, output, and the exact exit code DSH
+  records. `--auto` keeps importing new sessions on every `kap` command.
+
 ## [0.1.1] - 2026-10-29
 
 ### Fixed

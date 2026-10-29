@@ -58,6 +58,14 @@ enum Command {
         #[arg(long)]
         attempt: Option<String>,
     },
+    /// Install KAP's hooks for every project on this machine
+    Install,
+    /// Remove the hooks installed by `kap install`
+    Uninstall,
+    /// Stop recording in this repository
+    Disable,
+    /// Resume recording in this repository
+    Enable,
     /// Receive Claude Code hook events
     Hook {
         #[command(subcommand)]
@@ -67,6 +75,11 @@ enum Command {
     Evidence {
         #[command(subcommand)]
         command: EvidenceCommand,
+    },
+    /// Import history recorded by an agent harness
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
     },
     /// Share this repository's history through a git remote
     Push {
@@ -164,6 +177,25 @@ enum DecisionCommand {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ImportCommand {
+    /// Import DeepSeek Harness sessions
+    Dsh {
+        /// Attempt to import into (defaults to the attempt you are in)
+        #[arg(long)]
+        attempt: Option<String>,
+        /// A session log to import, or `latest`
+        #[arg(long)]
+        session: Option<String>,
+        /// Keep importing new sessions on every kap command
+        #[arg(long)]
+        auto: bool,
+        /// Stop importing automatically
+        #[arg(long)]
+        no_auto: bool,
     },
 }
 
@@ -444,6 +476,101 @@ fn run() -> Result<ExitCode, String> {
             }
         }
 
+        Command::Import { command } => match command {
+            ImportCommand::Dsh {
+                attempt,
+                session,
+                auto,
+                no_auto,
+            } => {
+                let repo = open_repo()?;
+                let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+
+                if no_auto {
+                    repo.set_dsh_auto(false, None).map_err(show)?;
+                    println!("Automatic DSH import is off.");
+                    return Ok(ExitCode::SUCCESS);
+                }
+
+                if auto {
+                    repo.set_dsh_auto(true, Some(&attempt_id)).map_err(show)?;
+                }
+
+                match session.as_deref() {
+                    Some("latest") => {
+                        let logs = repo.dsh_sessions().map_err(show)?;
+                        let Some(latest) = logs.first() else {
+                            println!("No DSH sessions for this workspace.");
+                            return Ok(ExitCode::SUCCESS);
+                        };
+                        let events = repo.import_dsh_session(&attempt_id, latest).map_err(show)?;
+                        println!(
+                            "Imported {events} event(s) from {} into {attempt_id}.",
+                            latest.display()
+                        );
+                    }
+                    Some(path) => {
+                        let log = PathBuf::from(path);
+                        let events = repo.import_dsh_session(&attempt_id, &log).map_err(show)?;
+                        println!(
+                            "Imported {events} event(s) from {} into {attempt_id}.",
+                            log.display()
+                        );
+                    }
+                    None => {
+                        let report = repo.import_dsh_new(&attempt_id).map_err(show)?;
+                        println!(
+                            "Imported {} event(s) from {} session(s) into {attempt_id}.",
+                            report.events, report.sessions
+                        );
+                    }
+                }
+
+                if auto {
+                    println!(
+                        "Automatic import is on: new sessions arrive with the next kap command."
+                    );
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Install => {
+            let path = install_hooks()?;
+            println!("Installed KAP hooks in {}", path.display());
+            println!("They stay out of the way outside a KAP repository.");
+            println!();
+            println!("Turn recording off:");
+            println!("  kap disable            in this repository");
+            println!("  KAP_DISABLED=1 …       for one session");
+            println!("  kap uninstall          everywhere");
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Uninstall => {
+            let path = remove_hooks()?;
+            println!("Removed KAP hooks from {}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Disable => {
+            let repo = open_repo()?;
+            let marker = repo.kap_dir().join("disabled");
+            std::fs::write(&marker, "recording disabled by `kap disable`\n").map_err(show)?;
+            println!("Recording is off in {}.", repo.root().display());
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Enable => {
+            let repo = open_repo()?;
+            let marker = repo.kap_dir().join("disabled");
+            if marker.exists() {
+                std::fs::remove_file(&marker).map_err(show)?;
+            }
+            println!("Recording is on in {}.", repo.root().display());
+            Ok(ExitCode::SUCCESS)
+        }
+
         Command::Push { remote } => {
             let repo = open_repo()?;
             let report = repo.push(&remote).map_err(show)?;
@@ -595,6 +722,29 @@ enum Entry<'a> {
     Decision(&'a Decision),
 }
 
+fn print_evidence(evidence: &Evidence) {
+    let state = match (evidence.observed, evidence.complete) {
+        (true, true) => "observed, complete",
+        (true, false) => "observed, partial",
+        (false, _) => "reported, not observed",
+    };
+    let artifact = evidence.artifact_hash.as_deref().unwrap_or("<no artifact>");
+    println!("{}  {}  {state}  {artifact}", evidence.id, evidence.source);
+    if let Some(command) = &evidence.command {
+        let code = evidence
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!("  command: {command}  -> exit {code}");
+    }
+    if let Some(path) = &evidence.path {
+        println!("  file: {path}");
+    }
+    if let Some(decision) = &evidence.decision_id {
+        println!("  decision: {decision}");
+    }
+}
+
 fn print_event(event: &ToolEvent) {
     let command = event.command.as_deref().unwrap_or("<unknown>");
     let outcome = match event.exit_code {
@@ -646,6 +796,10 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if recording_disabled() {
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let mut json = String::new();
     let _ = std::io::stdin().read_to_string(&mut json);
 
@@ -654,6 +808,10 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
     let Ok(repo) = Repo::open(&cwd) else {
         return Ok(ExitCode::SUCCESS);
     };
+
+    if repo.kap_dir().join("disabled").exists() {
+        return Ok(ExitCode::SUCCESS);
+    }
     let Some(attempt_id) = attempt_at(&repo, &cwd) else {
         return Ok(ExitCode::SUCCESS);
     };
@@ -724,12 +882,46 @@ const HOOK_EVENTS: &[(&str, &str)] = &[
     ("Stop", "stop"),
 ];
 
-fn setup_hooks(checkout: &Path) -> Result<(), String> {
-    let dir = checkout.join(".claude");
-    std::fs::create_dir_all(&dir).map_err(show)?;
-    let path = dir.join("settings.json");
+/// Whether recording is switched off for this invocation.
+fn recording_disabled() -> bool {
+    matches!(
+        std::env::var("KAP_DISABLED").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
 
-    let mut settings: serde_json::Value = match std::fs::read_to_string(&path) {
+/// Where Claude Code keeps its per-user settings.
+fn claude_settings_path() -> Result<PathBuf, String> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !dir.is_empty() {
+            return Ok(PathBuf::from(dir).join("settings.json"));
+        }
+    }
+
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join(".claude").join("settings.json"))
+}
+
+/// Install the hooks once per user, so no project or worktree needs its own setup.
+fn install_hooks() -> Result<PathBuf, String> {
+    let path = claude_settings_path()?;
+    wire_hooks(&path)?;
+    Ok(path)
+}
+
+/// Remove only the hooks KAP added, leaving every other setting untouched.
+fn remove_hooks() -> Result<PathBuf, String> {
+    let path = claude_settings_path()?;
+    unwire_hooks(&path)?;
+    Ok(path)
+}
+
+fn wire_hooks(path: &Path) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(show)?;
+    }
+
+    let mut settings: serde_json::Value = match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).map_err(show)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
         Err(error) => return Err(show(error)),
@@ -754,14 +946,18 @@ fn setup_hooks(checkout: &Path) -> Result<(), String> {
             .as_array_mut()
             .ok_or_else(|| format!("`hooks.{event}` must be an array"))?;
 
+        let suffix = format!("hook {subcommand}");
         let present = entries.iter().any(|entry| {
             entry
                 .get("hooks")
                 .and_then(|hooks| hooks.as_array())
                 .map(|hooks| {
-                    hooks
-                        .iter()
-                        .any(|hook| hook.get("command") == Some(&serde_json::json!(command)))
+                    hooks.iter().any(|hook| {
+                        hook.get("command")
+                            .and_then(|value| value.as_str())
+                            .map(|existing| existing.trim_end().ends_with(&suffix))
+                            .unwrap_or(false)
+                    })
                 })
                 .unwrap_or(false)
         });
@@ -774,36 +970,59 @@ fn setup_hooks(checkout: &Path) -> Result<(), String> {
     }
 
     let text = serde_json::to_string_pretty(&settings).map_err(show)?;
-    std::fs::write(&path, format!("{text}\n")).map_err(show)?;
-    println!("Wired KAP hooks into {}", path.display());
-    println!(
-        "The hooks call {}, so they work without KAP on PATH. Commit this file to share it.",
-        binary.display()
-    );
-    Ok(())
+    std::fs::write(path, format!("{text}\n")).map_err(show)
 }
 
-fn print_evidence(evidence: &Evidence) {
-    let state = match (evidence.observed, evidence.complete) {
-        (true, true) => "observed, complete",
-        (true, false) => "observed, partial",
-        (false, _) => "reported, not observed",
+fn unwire_hooks(path: &Path) -> Result<(), String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(());
     };
-    let artifact = evidence.artifact_hash.as_deref().unwrap_or("<no artifact>");
-    println!("{}  {}  {state}  {artifact}", evidence.id, evidence.source);
-    if let Some(command) = &evidence.command {
-        let code = evidence
-            .exit_code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "?".to_string());
-        println!("  command: {command}  -> exit {code}");
+
+    let mut settings: serde_json::Value = serde_json::from_str(&text).map_err(show)?;
+    let Some(hooks) = settings
+        .get_mut("hooks")
+        .and_then(|hooks| hooks.as_object_mut())
+    else {
+        return Ok(());
+    };
+
+    for (event, subcommand) in HOOK_EVENTS {
+        let suffix = format!("hook {subcommand}");
+        let Some(entries) = hooks.get_mut(*event).and_then(|value| value.as_array_mut()) else {
+            continue;
+        };
+
+        entries.retain(|entry| {
+            let ours = entry
+                .get("hooks")
+                .and_then(|hooks| hooks.as_array())
+                .map(|hooks| {
+                    hooks.iter().any(|hook| {
+                        hook.get("command")
+                            .and_then(|value| value.as_str())
+                            .map(|command| command.trim_end().ends_with(&suffix))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            !ours
+        });
+
+        if entries.is_empty() {
+            hooks.remove(*event);
+        }
     }
-    if let Some(path) = &evidence.path {
-        println!("  file: {path}");
-    }
-    if let Some(decision) = &evidence.decision_id {
-        println!("  decision: {decision}");
-    }
+
+    let text = serde_json::to_string_pretty(&settings).map_err(show)?;
+    std::fs::write(path, format!("{text}\n")).map_err(show)
+}
+
+fn setup_hooks(checkout: &Path) -> Result<(), String> {
+    let path = checkout.join(".claude").join("settings.json");
+    wire_hooks(&path)?;
+    println!("Wired KAP hooks into {}", path.display());
+    println!("Commit this file to share it, or run `kap install` once per machine instead.");
+    Ok(())
 }
 
 fn print_snapshot(snapshot: &Snapshot) {
@@ -991,7 +1210,12 @@ fn print_attempt(attempt: &Attempt) {
 
 fn open_repo() -> Result<Repo, String> {
     let cwd = std::env::current_dir().map_err(show)?;
-    Repo::open(&cwd).map_err(show)
+    let repo = Repo::open(&cwd).map_err(show)?;
+
+    // Automatic harness import must never get in the way of the command being run.
+    let _ = repo.auto_import_dsh();
+
+    Ok(repo)
 }
 
 /// The attempt to operate on: the one asked for, or the one whose worktree we are inside.

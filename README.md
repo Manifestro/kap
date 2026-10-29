@@ -163,17 +163,32 @@ Evidence is never taken on trust. With an artifact, KAP stores and hashes the by
 record **observed**. Without one — an agent saying "it works" — the record is kept as a claim and
 marked **not observed**.
 
-## Hooks for Claude Code
+## Install once, then forget it
+
+```sh
+kap install
+```
+
+`kap install` adds KAP's hooks to `~/.claude/settings.json`, so every Claude Code session on the
+machine reports to KAP without per-project setup. It only adds its own entries — existing settings
+and other hooks are left untouched — and `kap uninstall` removes exactly what it added.
+
+Recording still happens only inside an attempt worktree (`kap attempt start`); outside one the hooks
+do nothing.
+
+Turn it off when you do not want a session recorded:
+
+| Scope | How |
+| --- | --- |
+| One session | `KAP_DISABLED=1 claude` |
+| One repository | `kap disable` — and `kap enable` brings it back |
+| Whole machine | `kap uninstall` |
+
+## What the hooks record
 
 KAP does not wrap the agent and does not own its loop. It listens through
 [Claude Code hooks](https://code.claude.com/docs/en/hooks), which fire inside the session the agent
-is already running:
-
-```sh
-cd .kap/worktrees/attempt-…
-kap hook setup        # wires the hooks into .claude/settings.json in this checkout
-claude                # work as usual; KAP records what happens
-```
+is already running.
 
 | Hook | What KAP does with it |
 | --- | --- |
@@ -182,13 +197,9 @@ claude                # work as usual; KAP records what happens
 | `PostToolUseFailure` | Records the failure and its message. No exit code is invented. |
 | `Stop` | Closes the run and snapshots changed files as evidence, so edits made through a shell are covered too. |
 
-`kap hook setup` writes the absolute path of the `kap` binary into the hooks, so they work even when
-`kap` is not on `PATH`. Commit `.claude/settings.json` to share the setup with everyone working in
-the repository.
-
-Hooks record only inside an attempt worktree. Run Claude in the main checkout and nothing is
-recorded — `kap status` there says so explicitly. Set the hooks up once per worktree, or commit
-`.claude/settings.json` on the branch every worktree starts from.
+The hooks call the absolute path of the `kap` binary, so they work without `kap` on `PATH`. If you
+prefer per-project setup, `kap hook setup` writes the same hooks into a checkout's
+`.claude/settings.json`, which you can commit and share.
 
 When the attempt is done, compare it and decide:
 

@@ -215,7 +215,17 @@ impl Db {
 
     /// Record a tool event.
     pub fn insert_tool_event(&self, event: &ToolEvent) -> Result<()> {
-        self.conn
+        self.insert_tool_event_returning(event)?;
+        Ok(())
+    }
+
+    /// Record a tool event, reporting whether it was new.
+    ///
+    /// Duplicate deliveries are expected from harnesses that can retry, so the insert ignores an
+    /// id it already has.
+    pub fn insert_tool_event_returning(&self, event: &ToolEvent) -> Result<bool> {
+        let changed = self
+            .conn
             .execute(
                 "INSERT OR IGNORE INTO tool_events (id, attempt_id, run_id, kind, command, \
                  exit_code, output_hash, stderr_hash, observed, occurred_at, agent_id, \
@@ -236,7 +246,7 @@ impl Db {
                 ],
             )
             .map_err(|e| Error::db(&self.path, e))?;
-        Ok(())
+        Ok(changed > 0)
     }
 
     /// Tool events, oldest first, optionally limited to one attempt.
