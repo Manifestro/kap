@@ -26,6 +26,9 @@ Two consequences follow, and both are requirements rather than accidents:
 2. **Execution belongs to the harness.** An adapter may start an agent inside an isolated
    workspace, but the agent's loop, model calls, and reasoning stay outside KAP.
 
+KAP does not manage an agent's thinking. It manages its context, its events, and its history of
+decisions.
+
 ## 2. Responsibilities
 
 | Area | KAP's job |
@@ -35,7 +38,8 @@ Two consequences follow, and both are requirements rather than accidents:
 | **Decisions** | Record explanations, considered alternatives, and justifications. |
 | **Snapshots** | Restore the state of a given piece of agent work. |
 | **Collaboration** | Exchange results between agents without conflicts. |
-| **Merge** | Compare and deliberately combine results. |
+| **Merge** | Compare and deliberately combine results, behind a review gate. |
+| **Sync** | Move attempts, decisions, and evidence between machines without loss. |
 
 ## 3. Non-goals
 
@@ -76,8 +80,20 @@ Principles:
   a later claim cannot quietly change what was observed earlier.
 - **Read-side never needs adapters.** The database and objects are the whole story.
 
-*(open)* How `.kap/` travels between people and machines — commit it, export it, or keep it local
-and sync only on demand — is not decided.
+### 4.1 Sync and portability
+
+**Decision: hybrid — local storage first, explicit synchronization on demand.**
+
+- `.kap/` is the local database of history, decisions, evidence, and attempts.
+- `kap push` and `kap pull` move KAP objects between machines.
+- **Git is the first transport.** KAP objects travel as a separate ref namespace, apart from the
+  source branches, so history syncs without polluting the code history.
+- **KAP Remote** — a dedicated server — is a later option, not a requirement.
+- **Content addressing (BLAKE3) does the deduplication.** The same object is stored once and
+  verified on receipt; a corrupted or tampered object fails the hash check.
+- **Never synced:** personal settings, secrets, and temporary workspaces.
+- **Offline first.** Everything must work with no network at all; sync is never a precondition for
+  recording or reading history.
 
 ## 5. Evidence
 
@@ -127,10 +143,13 @@ The vocabulary is still settling. Current working definitions:
 - **Workspace** — an isolated unit of work, backed by a git worktree and a branch.
 - **Agent** — an external actor plus the adapter that connects it: Claude Code, Codex, DeepSeek, or
   anything else that can emit events.
-- **Attempt** — one bounded run of an agent toward a goal. Attempts are the unit of comparison,
-  snapshotting, and merging: two agents attacking the same task produce two attempts.
-- **Tool event** — one observable action inside an attempt: an executed command, a file edit, a
-  tool call, along with its result.
+- **Attempt** — one attempt to solve a task. An attempt may span several runs and sessions; it is
+  the unit of comparison, snapshotting, and merging. Two agents attacking the same task produce two
+  attempts. An attempt is closed explicitly — see [§8](#8-adapters).
+- **Run** — one execution of an agent harness inside an attempt. A run can end and another can
+  begin without closing the attempt.
+- **Tool event** — one observable action inside a run: an executed command, a file edit, a tool
+  call, along with its result.
 - **File change** — a diff or content hash recorded against an attempt.
 - **Decision** — a choice an agent commits to, with its reasoning and the alternatives it rejected.
 - **Evidence** — observed support for or against a decision (see above).
@@ -152,6 +171,25 @@ separate question, and likely a later one.
 An adapter connects one harness to KAP. Its job is narrow: translate what the harness does into
 events, and translate KAP's instructions into something the harness understands.
 
+### Lifecycle
+
+An adapter runs a fixed cycle around every attempt:
+
+1. **Context in.** KAP hands the agent the task's history: previous attempts, decisions, and
+   evidence. The agent starts informed instead of cold.
+2. **Work.** The agent acts inside an isolated workspace — its own worktree and branch.
+3. **Decisions.** The adapter records actions as they happen and asks the agent to explain the
+   decisions it makes — the rationale and the alternatives it rejected.
+4. **Evidence.** KAP captures commands, file changes, and check results automatically. What the
+   adapter cannot observe is marked unobserved.
+5. **Completion.** The agent returns a result. KAP closes the attempt and preserves its history for
+   the agents that follow.
+
+KAP never asks an agent to expose its reasoning process; it asks for the explanation of a decision,
+which the agent can produce deliberately.
+
+### Modes
+
 - **Wrapped mode** — the adapter launches the agent inside a prepared worktree and observes tool
   calls and file changes as they happen. This gives the most complete telemetry.
 - **Reported mode** — the agent runs on its own and reports what it did by calling the `kap` CLI
@@ -165,24 +203,28 @@ An adapter must never be required for reading history.
 ```text
 kap init                     # create .kap/ in a repository
 kap attempt start            # open a new attempt (worktree + branch)
+kap attempt close            # close an attempt and freeze its history
 kap attempt list             # list attempts and their state
 kap log                      # timeline of events, decisions, evidence
 kap decision add             # record a decision with rationale and alternatives
 kap evidence attach          # attach an artifact as evidence
 kap snapshot                 # snapshot the current state of an attempt
 kap diff <a> <b>             # compare two attempts
-kap merge <attempt>          # bring an attempt's result into the main tree
+kap review <attempt>         # inspect diff + evidence before merging
+kap merge <attempt>          # merge an attempt, only after review
 kap restore <snapshot>       # restore a recorded state
+kap push / kap pull          # sync KAP objects with a remote
 ```
 
 Names, flags, and grouping will change. The list exists to keep scope honest.
 
 ## 10. Open questions
 
-1. **How decisions arrive.** A CLI subcommand, an MCP tool, or harness hooks — and how much KAP
-   should prompt an agent to record one.
-2. **Merge semantics.** Whether `kap merge` is a code merge, a review step, or both; what happens
-   when two attempts touch the same file.
-3. **Attempt lifecycle.** Who closes an attempt, and what makes one "done".
-4. **Portability of `.kap/`.** Local-only versus committed versus exported.
-5. **Multi-user use.** Whether several people share one `.kap/`, and how.
+1. **How the adapter asks for a decision.** Prompt injection, a tool call, or a post-run
+   interrogation — and how much KAP should insist on an explanation before closing an attempt.
+2. **Merge conflicts.** The review gate is decided; what review does when two attempts touch the
+   same file is not.
+3. **Multi-user use.** Whether several people share one `.kap/`, and how identity and authorship
+   are attributed across them.
+4. **Object retention.** Snapshots and artifacts grow without bound; when they may be pruned
+   without breaking reproducibility.
