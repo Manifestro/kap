@@ -60,6 +60,7 @@ impl Repo {
         let event = ToolEvent {
             id: format!("event-{}", new_id()),
             attempt_id: attempt_id.to_string(),
+            run_id: None,
             kind: "command".to_string(),
             command: Some(command.join(" ")),
             exit_code: Some(exit_code),

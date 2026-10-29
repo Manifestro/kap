@@ -49,6 +49,12 @@ pub enum Error {
     #[error("no command given")]
     EmptyCommand,
 
+    #[error("could not parse hook input")]
+    HookPayload {
+        #[source]
+        source: serde_json::Error,
+    },
+
     #[error("`{address}` is not an object address (expected `blake3:<hex>`)")]
     InvalidObjectAddress { address: String },
 }

@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
-use crate::model::{Attempt, AttemptState, Decision, Evidence, ToolEvent};
+use crate::model::{Attempt, AttemptState, Decision, Evidence, Run, ToolEvent};
 
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_event_outputs.sql"),
+    include_str!("../migrations/0003_run_sessions.sql"),
+    include_str!("../migrations/0004_evidence_paths.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -106,11 +108,13 @@ impl Db {
     pub fn insert_tool_event(&self, event: &ToolEvent) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO tool_events (id, attempt_id, kind, command, exit_code, output_hash, \
-                 stderr_hash, observed, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO tool_events (id, attempt_id, run_id, kind, command, exit_code, \
+                 output_hash, stderr_hash, observed, occurred_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 rusqlite::params![
                     event.id,
                     event.attempt_id,
+                    event.run_id,
                     event.kind,
                     event.command,
                     event.exit_code,
@@ -129,8 +133,8 @@ impl Db {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, attempt_id, kind, command, exit_code, output_hash, stderr_hash, \
-                 observed, occurred_at FROM tool_events \
+                "SELECT id, attempt_id, run_id, kind, command, exit_code, output_hash, \
+                 stderr_hash, observed, occurred_at FROM tool_events \
                  WHERE ?1 IS NULL OR attempt_id = ?1 ORDER BY occurred_at ASC, id ASC",
             )
             .map_err(|e| Error::db(&self.path, e))?;
@@ -140,6 +144,7 @@ impl Db {
                 Ok(ToolEvent {
                     id: row.get("id")?,
                     attempt_id: row.get("attempt_id")?,
+                    run_id: row.get("run_id")?,
                     kind: row.get("kind")?,
                     command: row.get("command")?,
                     exit_code: row.get("exit_code")?,
@@ -214,8 +219,8 @@ impl Db {
         self.conn
             .execute(
                 "INSERT INTO evidence (id, attempt_id, decision_id, source, command, exit_code, \
-                 artifact_hash, observed, complete, recorded_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 artifact_hash, path, observed, complete, recorded_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 rusqlite::params![
                     evidence.id,
                     evidence.attempt_id,
@@ -224,6 +229,7 @@ impl Db {
                     evidence.command,
                     evidence.exit_code,
                     evidence.artifact_hash,
+                    evidence.path,
                     evidence.observed as i64,
                     evidence.complete as i64,
                     evidence.recorded_at,
@@ -239,7 +245,7 @@ impl Db {
             .conn
             .prepare(
                 "SELECT id, attempt_id, decision_id, source, command, exit_code, artifact_hash, \
-                 observed, complete, recorded_at FROM evidence \
+                 path, observed, complete, recorded_at FROM evidence \
                  WHERE attempt_id = ?1 ORDER BY recorded_at ASC, id ASC",
             )
             .map_err(|e| Error::db(&self.path, e))?;
@@ -254,6 +260,7 @@ impl Db {
                     command: row.get("command")?,
                     exit_code: row.get("exit_code")?,
                     artifact_hash: row.get("artifact_hash")?,
+                    path: row.get("path")?,
                     observed: row.get::<_, i64>("observed")? != 0,
                     complete: row.get::<_, i64>("complete")? != 0,
                     recorded_at: row.get("recorded_at")?,
@@ -266,6 +273,78 @@ impl Db {
             evidence.push(row.map_err(|e| Error::db(&self.path, e))?);
         }
         Ok(evidence)
+    }
+
+    /// Record a run.
+    pub fn insert_run(&self, run: &Run) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO runs (id, attempt_id, agent, session_id, status, started_at, \
+                 finished_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    run.id,
+                    run.attempt_id,
+                    run.agent,
+                    run.session_id,
+                    run.status,
+                    run.started_at,
+                    run.finished_at,
+                ],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// The run belonging to a harness session.
+    pub fn run_by_session(&self, session_id: &str) -> Result<Option<Run>> {
+        let run = self
+            .conn
+            .query_row(
+                "SELECT id, attempt_id, agent, session_id, status, started_at, finished_at \
+                 FROM runs WHERE session_id = ?1",
+                [session_id],
+                |row| {
+                    Ok(Run {
+                        id: row.get("id")?,
+                        attempt_id: row.get("attempt_id")?,
+                        agent: row.get("agent")?,
+                        session_id: row.get("session_id")?,
+                        status: row.get("status")?,
+                        started_at: row.get("started_at")?,
+                        finished_at: row.get("finished_at")?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(run)
+    }
+
+    /// Mark a session's run as finished.
+    pub fn finish_run(&self, session_id: &str, status: &str, finished_at: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE runs SET status = ?2, finished_at = ?3 WHERE session_id = ?1",
+                rusqlite::params![session_id, status, finished_at],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// The hash most recently recorded for a path in this attempt.
+    pub fn last_evidence_hash(&self, attempt_id: &str, path: &str) -> Result<Option<String>> {
+        let hash = self
+            .conn
+            .query_row(
+                "SELECT artifact_hash FROM evidence \
+                 WHERE attempt_id = ?1 AND path = ?2 AND artifact_hash IS NOT NULL \
+                 ORDER BY recorded_at DESC, id DESC LIMIT 1",
+                rusqlite::params![attempt_id, path],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(hash)
     }
 
     fn migrate(&self) -> Result<()> {

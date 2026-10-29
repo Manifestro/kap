@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -7,6 +7,7 @@ use kap_core::attempt::NewAttempt;
 use kap_core::decision::NewDecision;
 use kap_core::diff::AttemptDiff;
 use kap_core::evidence::{EvidenceSource, NewEvidence};
+use kap_core::hooks::HookInput;
 use kap_core::model::{Attempt, Decision, Evidence, ToolEvent};
 use kap_core::repo::Repo;
 
@@ -53,6 +54,11 @@ enum Command {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
+    },
+    /// Receive Claude Code hook events
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
     },
     /// Attach evidence to an attempt, or list what is attached
     Evidence {
@@ -114,6 +120,20 @@ enum DecisionCommand {
         #[arg(long)]
         attempt: Option<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum HookCommand {
+    /// SessionStart hook: brief the agent on prior work
+    SessionStart,
+    /// PostToolUse hook: record a tool call
+    PostToolUse,
+    /// PostToolUseFailure hook: record a failed tool call
+    PostToolUseFailure,
+    /// Stop hook: finish the run for this session
+    Stop,
+    /// Write the hooks into .claude/settings.json
+    Setup,
 }
 
 #[derive(Debug, Subcommand)]
@@ -283,6 +303,8 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Hook { command } => handle_hook(command),
+
         Command::Evidence { command } => {
             let repo = open_repo()?;
             match command {
@@ -370,13 +392,16 @@ enum Entry<'a> {
 
 fn print_event(event: &ToolEvent) {
     let command = event.command.as_deref().unwrap_or("<unknown>");
-    let code = event
-        .exit_code
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "?".to_string());
+    let outcome = match event.exit_code {
+        Some(code) => format!("  exit {code}"),
+        None => String::new(),
+    };
     println!(
-        "{}  cmd       {command}  -> exit {code}",
-        time_of(&event.occurred_at)
+        "{}  {:<9} {}{}",
+        time_of(&event.occurred_at),
+        event.kind,
+        summarise(command),
+        outcome
     );
 }
 
@@ -394,6 +419,128 @@ fn print_decision(decision: &Decision) {
     }
 }
 
+fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
+    let cwd = std::env::current_dir().map_err(show)?;
+
+    if matches!(command, HookCommand::Setup) {
+        // Write into the checkout the agent actually runs in. Inside a worktree that is the
+        // worktree itself, not the main repository.
+        let checkout = kap_core::git::Git::discover(&cwd)
+            .map_err(show)?
+            .root()
+            .to_path_buf();
+        setup_hooks(&checkout)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let mut json = String::new();
+    std::io::stdin().read_to_string(&mut json).map_err(show)?;
+
+    // A hook must never break the agent's session: outside a KAP repository it simply does nothing.
+    let Ok(repo) = Repo::open(&cwd) else {
+        return Ok(ExitCode::SUCCESS);
+    };
+    let Some(attempt_id) = attempt_at(&repo, &cwd) else {
+        return Ok(ExitCode::SUCCESS);
+    };
+
+    let input = HookInput::parse(&json).map_err(show)?;
+    let attempt = repo.attempt(&attempt_id).map_err(show)?;
+
+    match command {
+        HookCommand::SessionStart => {
+            let context = repo.session_context(&attempt).map_err(show)?;
+            let payload = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": context,
+                }
+            });
+            println!("{payload}");
+        }
+        HookCommand::PostToolUse | HookCommand::PostToolUseFailure => {
+            let run = repo
+                .run_for_session(&attempt_id, &input.session_id)
+                .map_err(show)?;
+            let failed = matches!(command, HookCommand::PostToolUseFailure);
+            repo.record_hook_event(&attempt, &run.id, &input, failed)
+                .map_err(show)?;
+        }
+        HookCommand::Stop => {
+            repo.finish_run_for_session(&input.session_id, "completed")
+                .map_err(show)?;
+            let recorded = repo.record_worktree_snapshot(&attempt).map_err(show)?;
+            if recorded > 0 {
+                eprintln!("kap: recorded {recorded} changed file(s) as evidence");
+            }
+        }
+        HookCommand::Setup => unreachable!("setup is handled before reading stdin"),
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+const HOOK_EVENTS: &[(&str, &str)] = &[
+    ("SessionStart", "session-start"),
+    ("PostToolUse", "post-tool-use"),
+    ("PostToolUseFailure", "post-tool-use-failure"),
+    ("Stop", "stop"),
+];
+
+fn setup_hooks(checkout: &Path) -> Result<(), String> {
+    let dir = checkout.join(".claude");
+    std::fs::create_dir_all(&dir).map_err(show)?;
+    let path = dir.join("settings.json");
+
+    let mut settings: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(show)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(error) => return Err(show(error)),
+    };
+
+    let root = settings
+        .as_object_mut()
+        .ok_or_else(|| "settings.json must contain a JSON object".to_string())?;
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "`hooks` in settings.json must be an object".to_string())?;
+
+    for (event, subcommand) in HOOK_EVENTS {
+        let command = format!("kap hook {subcommand}");
+        let entries = hooks
+            .entry(*event)
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| format!("`hooks.{event}` must be an array"))?;
+
+        let present = entries.iter().any(|entry| {
+            entry
+                .get("hooks")
+                .and_then(|hooks| hooks.as_array())
+                .map(|hooks| {
+                    hooks
+                        .iter()
+                        .any(|hook| hook.get("command") == Some(&serde_json::json!(command)))
+                })
+                .unwrap_or(false)
+        });
+
+        if !present {
+            entries.push(serde_json::json!({
+                "hooks": [{ "type": "command", "command": command }]
+            }));
+        }
+    }
+
+    let text = serde_json::to_string_pretty(&settings).map_err(show)?;
+    std::fs::write(&path, format!("{text}\n")).map_err(show)?;
+    println!("Wired KAP hooks into {}", path.display());
+    println!("The hooks call `kap`, so the binary must be on PATH. Commit this file to share it.");
+    Ok(())
+}
+
 fn print_evidence(evidence: &Evidence) {
     let state = match (evidence.observed, evidence.complete) {
         (true, true) => "observed, complete",
@@ -408,6 +555,9 @@ fn print_evidence(evidence: &Evidence) {
             .map(|code| code.to_string())
             .unwrap_or_else(|| "?".to_string());
         println!("  command: {command}  -> exit {code}");
+    }
+    if let Some(path) = &evidence.path {
+        println!("  file: {path}");
     }
     if let Some(decision) = &evidence.decision_id {
         println!("  decision: {decision}");
@@ -477,6 +627,16 @@ fn attempt_at(repo: &Repo, cwd: &Path) -> Option<String> {
         .as_os_str()
         .to_str()
         .map(str::to_owned)
+}
+
+/// Keep a log line short enough to scan: first line only, capped.
+fn summarise(command: &str) -> String {
+    let first = command.lines().next().unwrap_or_default();
+    let mut text: String = first.chars().take(90).collect();
+    if text.len() < command.len() {
+        text.push('…');
+    }
+    text
 }
 
 fn time_of(timestamp: &str) -> &str {

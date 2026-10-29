@@ -83,6 +83,28 @@ impl Git {
         Ok(output.status.success())
     }
 
+    /// Run git inside another working tree of the same repository.
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .map_err(Error::GitMissing)?;
+
+        if !output.status.success() {
+            return Err(Error::Git {
+                command: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Changed paths in a working tree, including untracked files.
+    pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
+        self.run_in(dir, &["status", "--porcelain"])
+    }
+
     /// A machine-readable diff between two revisions: one `added\tremoved\tpath` line per file.
     pub fn diff_numstat(&self, from: &str, to: &str) -> Result<String> {
         self.run(&["diff", "--numstat", from, to])

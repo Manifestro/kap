@@ -64,6 +64,7 @@ pub fn now_rfc3339() -> String {
 pub struct ToolEvent {
     pub id: String,
     pub attempt_id: String,
+    pub run_id: Option<String>,
     pub kind: String,
     pub command: Option<String>,
     pub exit_code: Option<i32>,
@@ -100,9 +101,23 @@ pub struct Evidence {
     pub command: Option<String>,
     pub exit_code: Option<i32>,
     pub artifact_hash: Option<String>,
+    /// The file this evidence is about, when it is about one.
+    pub path: Option<String>,
     /// Whether KAP saw the supporting bytes itself, rather than being told about them.
     pub observed: bool,
     /// Whether the evidence is whole; an agent's report is not.
     pub complete: bool,
     pub recorded_at: String,
+}
+
+/// One execution of an agent harness inside an attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub id: String,
+    pub attempt_id: String,
+    pub agent: String,
+    pub session_id: Option<String>,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
 }

@@ -106,6 +106,7 @@ impl Repo {
             command: new.command.map(str::to_string),
             exit_code: new.exit_code,
             artifact_hash,
+            path: None,
             observed,
             complete: new.complete && observed,
             recorded_at: now_rfc3339(),

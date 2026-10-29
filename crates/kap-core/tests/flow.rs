@@ -5,6 +5,7 @@ use std::process::Command;
 use kap_core::attempt::NewAttempt;
 use kap_core::decision::NewDecision;
 use kap_core::evidence::{EvidenceSource, NewEvidence};
+use kap_core::hooks::HookInput;
 use kap_core::model::AttemptState;
 use kap_core::repo::Repo;
 use kap_core::Error;
@@ -470,4 +471,186 @@ fn evidence_cannot_reference_a_foreign_decision() {
         Err(Error::DecisionNotFound { .. }) => {}
         other => panic!("expected DecisionNotFound, got {other:?}"),
     }
+}
+
+#[test]
+fn a_post_tool_use_hook_records_the_command() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "hooked",
+            task: Some("fix parser"),
+            base: None,
+        })
+        .expect("start attempt");
+
+    let input = HookInput::parse(
+        r#"{"session_id":"session-1","hook_event_name":"PostToolUse","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},"tool_response":{"stdout":"ok\n","stderr":""}}"#,
+    )
+    .expect("parse hook input");
+
+    let run = repo
+        .run_for_session(&attempt.id, &input.session_id)
+        .expect("start run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, false)
+        .expect("record event")
+        .expect("an event");
+
+    assert_eq!(event.kind, "command");
+    assert_eq!(event.command.as_deref(), Some("cargo test"));
+    assert_eq!(event.exit_code, Some(0));
+    assert_eq!(event.run_id.as_deref(), Some(run.id.as_str()));
+
+    let stdout = repo
+        .objects()
+        .get(event.stdout_hash.as_deref().expect("stdout object"))
+        .expect("read stdout");
+    assert_eq!(stdout, b"ok\n");
+}
+
+#[test]
+fn a_failed_tool_call_records_the_error_without_inventing_an_exit_code() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "failed",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let input = HookInput::parse(
+        r#"{"session_id":"session-2","hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},"error":"Exit code 101"}"#,
+    )
+    .expect("parse hook input");
+
+    let run = repo
+        .run_for_session(&attempt.id, &input.session_id)
+        .expect("start run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, true)
+        .expect("record event")
+        .expect("an event");
+
+    assert_eq!(event.exit_code, None);
+    let stderr = repo
+        .objects()
+        .get(event.stderr_hash.as_deref().expect("stderr object"))
+        .expect("read stderr");
+    assert_eq!(stderr, b"Exit code 101");
+}
+
+#[test]
+fn a_file_edit_hook_produces_evidence_with_the_file_hash() {
+    let (dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "edit",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let file = dir.path().join("parser.rs");
+    fs::write(&file, "fn parse() {}\n").expect("write file");
+
+    let json = format!(
+        r#"{{"session_id":"session-3","hook_event_name":"PostToolUse","tool_name":"Edit",
+             "tool_input":{{"file_path":"{}"}},"tool_response":{{"success":true}}}}"#,
+        file.display()
+    );
+    let input = HookInput::parse(&json).expect("parse hook input");
+    let run = repo
+        .run_for_session(&attempt.id, &input.session_id)
+        .expect("start run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, false)
+        .expect("record event")
+        .expect("an event");
+
+    assert_eq!(event.kind, "file_change");
+
+    let evidence = repo.evidence(&attempt.id).expect("list evidence");
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].source, "file_change");
+    assert!(evidence[0].observed && evidence[0].complete);
+
+    let stored = repo
+        .objects()
+        .get(evidence[0].artifact_hash.as_deref().expect("artifact hash"))
+        .expect("read artifact");
+    assert_eq!(stored, b"fn parse() {}\n");
+}
+
+#[test]
+fn session_context_carries_the_attempt_and_its_decisions() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "context",
+            task: Some("accept trailing commas"),
+            base: None,
+        })
+        .expect("start attempt");
+    repo.add_decision(
+        &attempt.id,
+        NewDecision {
+            summary: "Normalize in the lexer",
+            rationale: Some("the parser stays simple"),
+            alternatives: None,
+        },
+    )
+    .expect("add decision");
+
+    let context = repo.session_context(&attempt).expect("build context");
+    assert!(context.contains(&attempt.id));
+    assert!(context.contains("accept trailing commas"));
+    assert!(context.contains("Normalize in the lexer"));
+    assert!(context.contains("kap decision add"));
+}
+
+#[test]
+fn a_worktree_snapshot_records_each_changed_file_once() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "snapshot",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write file");
+    assert_eq!(
+        repo.record_worktree_snapshot(&attempt).expect("snapshot"),
+        1
+    );
+
+    // Unchanged content is not recorded twice.
+    assert_eq!(
+        repo.record_worktree_snapshot(&attempt)
+            .expect("snapshot again"),
+        0
+    );
+
+    let evidence = repo.evidence(&attempt.id).expect("list evidence");
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].source, "file_change");
+    assert_eq!(evidence[0].path.as_deref(), Some("calc.py"));
+
+    let stored = repo
+        .objects()
+        .get(evidence[0].artifact_hash.as_deref().unwrap())
+        .expect("read artifact");
+    assert_eq!(stored, b"print(1)\n");
+
+    fs::write(attempt.worktree.join("calc.py"), "print(2)\n").expect("write file again");
+    assert_eq!(
+        repo.record_worktree_snapshot(&attempt)
+            .expect("third snapshot"),
+        1
+    );
 }

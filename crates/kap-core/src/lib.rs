@@ -12,8 +12,10 @@ pub mod error;
 pub mod events;
 pub mod evidence;
 pub mod git;
+pub mod hooks;
 pub mod model;
 pub mod objects;
 pub mod repo;
+pub mod snapshot;
 
 pub use error::{Error, Result};

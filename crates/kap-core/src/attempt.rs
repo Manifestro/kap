@@ -71,6 +71,11 @@ impl Repo {
         db.attempt(attempt_id)
     }
 
+    /// One attempt by id.
+    pub fn attempt(&self, attempt_id: &str) -> Result<Attempt> {
+        self.db()?.attempt(attempt_id)
+    }
+
     /// All attempts, newest first.
     pub fn attempts(&self) -> Result<Vec<Attempt>> {
         self.db()?.attempts()

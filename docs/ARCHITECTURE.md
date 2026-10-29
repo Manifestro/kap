@@ -196,6 +196,12 @@ which the agent can produce deliberately.
   (or an MCP bridge). This works with any harness, at the cost of completeness: KAP records what it
   is told, and marks the rest as unobserved.
 
+**Claude Code uses hooks, not a wrapper.** `kap hook setup` writes four hooks into the checkout's
+`.claude/settings.json`: `SessionStart` briefs the agent on earlier attempts and decisions,
+`PostToolUse` and `PostToolUseFailure` record tool calls and their output, and `Stop` finishes the
+run and snapshots changed files as evidence — which catches edits made through a shell. The agent
+keeps its own harness; KAP only listens.
+
 An adapter must never be required for reading history.
 
 ## 9. CLI surface *(draft)*

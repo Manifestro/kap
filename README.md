@@ -90,7 +90,8 @@ decisions are recorded as they happen, and two attempts can be compared before a
 - [x] Closing an attempt and comparing two attempts with `kap diff`
 - [x] Evidence attached to decisions, marked observed or merely reported
 - [ ] Snapshots and restore
-- [ ] Adapter interface and a first adapter (Claude Code or Codex)
+- [x] Claude Code adapter through hooks: session briefing, tool events, and a stop-time snapshot
+- [ ] Codex adapter and a documented adapter interface for other agents
 - [ ] Review-gated merge
 - [ ] `kap push` / `kap pull` over a separate git ref namespace
 
@@ -136,6 +137,28 @@ hash proves two records saw the same bytes. A failed command is recorded too —
 Evidence is never taken on trust. With an artifact, KAP stores and hashes the bytes and marks the
 record **observed**. Without one — an agent saying "it works" — the record is kept as a claim and
 marked **not observed**.
+
+## Hooks for Claude Code
+
+KAP does not wrap the agent and does not own its loop. It listens through
+[Claude Code hooks](https://code.claude.com/docs/en/hooks), which fire inside the session the agent
+is already running:
+
+```sh
+cd .kap/worktrees/attempt-…
+kap hook setup        # wires the hooks into .claude/settings.json in this checkout
+claude                # work as usual; KAP records what happens
+```
+
+| Hook | What KAP does with it |
+| --- | --- |
+| `SessionStart` | Injects a briefing — earlier attempts, recorded decisions — into the agent's context. |
+| `PostToolUse` | Records commands with their output, and file edits with the file's hash. |
+| `PostToolUseFailure` | Records the failure and its message. No exit code is invented. |
+| `Stop` | Closes the run and snapshots changed files as evidence, so edits made through a shell are covered too. |
+
+The hooks call `kap`, so the binary must be on `PATH`. Commit `.claude/settings.json` to share the
+setup with everyone working in the repository.
 
 When the attempt is done, close it and compare it with another attempt:
 
