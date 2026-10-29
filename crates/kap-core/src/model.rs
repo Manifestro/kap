@@ -121,3 +121,15 @@ pub struct Run {
     pub started_at: String,
     pub finished_at: Option<String>,
 }
+
+/// A verdict on an attempt, tied to the exact commit it looked at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Review {
+    pub id: String,
+    pub attempt_id: String,
+    pub verdict: String,
+    pub reviewer: String,
+    pub head_commit: String,
+    pub note: Option<String>,
+    pub created_at: String,
+}

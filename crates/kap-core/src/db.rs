@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
-use crate::model::{Attempt, AttemptState, Decision, Evidence, Run, ToolEvent};
+use crate::model::{Attempt, AttemptState, Decision, Evidence, Review, Run, ToolEvent};
 
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_event_outputs.sql"),
     include_str!("../migrations/0003_run_sessions.sql"),
     include_str!("../migrations/0004_evidence_paths.sql"),
+    include_str!("../migrations/0005_reviews.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -345,6 +346,51 @@ impl Db {
             .optional()
             .map_err(|e| Error::db(&self.path, e))?;
         Ok(hash)
+    }
+
+    /// Record a review verdict.
+    pub fn insert_review(&self, review: &Review) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO reviews (id, attempt_id, verdict, reviewer, head_commit, note, \
+                 created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    review.id,
+                    review.attempt_id,
+                    review.verdict,
+                    review.reviewer,
+                    review.head_commit,
+                    review.note,
+                    review.created_at,
+                ],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// The most recent review of an attempt.
+    pub fn latest_review(&self, attempt_id: &str) -> Result<Option<Review>> {
+        let review = self
+            .conn
+            .query_row(
+                "SELECT id, attempt_id, verdict, reviewer, head_commit, note, created_at \
+                 FROM reviews WHERE attempt_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
+                [attempt_id],
+                |row| {
+                    Ok(Review {
+                        id: row.get("id")?,
+                        attempt_id: row.get("attempt_id")?,
+                        verdict: row.get("verdict")?,
+                        reviewer: row.get("reviewer")?,
+                        head_commit: row.get("head_commit")?,
+                        note: row.get("note")?,
+                        created_at: row.get("created_at")?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(review)
     }
 
     fn migrate(&self) -> Result<()> {

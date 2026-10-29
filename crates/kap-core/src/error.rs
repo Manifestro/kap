@@ -40,6 +40,18 @@ pub enum Error {
     #[error("worktree `{path}` already exists")]
     WorktreeExists { path: PathBuf },
 
+    #[error("attempt `{id}` has not been reviewed; run `kap review {id} --approve`")]
+    MergeNotReviewed { id: String },
+
+    #[error("the latest review of attempt `{id}` rejected it")]
+    MergeRejected { id: String },
+
+    #[error("attempt `{id}` changed after it was approved; review the new commits")]
+    MergeStaleReview { id: String },
+
+    #[error("the working tree has uncommitted changes; commit or stash them before merging")]
+    MergeDirtyWorktree,
+
     #[error("decision `{id}` not found for attempt `{attempt}`")]
     DecisionNotFound { id: String, attempt: String },
 

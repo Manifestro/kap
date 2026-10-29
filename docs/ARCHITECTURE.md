@@ -218,8 +218,8 @@ kap decision list            # decisions recorded for an attempt                
 kap evidence attach          # attach an artifact as evidence                 [done]
 kap snapshot                 # snapshot the current state of an attempt
 kap diff <a> <b>             # compare two attempts                              [done]
-kap review <attempt>         # inspect diff + evidence before merging
-kap merge <attempt>          # merge an attempt, only after review
+kap review <attempt>         # inspect diff + evidence, record a verdict        [done]
+kap merge <attempt>          # merge an attempt, only after review               [done]
 kap restore <snapshot>       # restore a recorded state
 kap push / kap pull          # sync KAP objects with a remote
 ```

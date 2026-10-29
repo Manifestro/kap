@@ -100,6 +100,44 @@ impl Git {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
+    /// The commit a local branch points at.
+    pub fn branch_head(&self, branch: &str) -> Result<String> {
+        let spec = format!("refs/heads/{branch}^{{commit}}");
+        Ok(self
+            .run(&["rev-parse", "--verify", &spec])?
+            .trim()
+            .to_string())
+    }
+
+    /// The branch currently checked out.
+    pub fn current_branch(&self) -> Result<String> {
+        Ok(self
+            .run(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string())
+    }
+
+    /// Merge a branch into the current one, always with a merge commit.
+    pub fn merge_no_ff(&self, branch: &str) -> Result<()> {
+        let message = format!("Merge {branch}");
+        self.run(&["merge", "--no-ff", "-m", &message, branch])?;
+        Ok(())
+    }
+
+    /// Undo a merge that stopped on a conflict.
+    pub fn merge_abort(&self) -> Result<()> {
+        self.run(&["merge", "--abort"])?;
+        Ok(())
+    }
+
+    /// The configured git user name, when there is one.
+    pub fn user_name(&self) -> Option<String> {
+        self.run(&["config", "user.name"])
+            .ok()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+    }
+
     /// Changed paths in a working tree, including untracked files.
     pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
         self.run_in(dir, &["status", "--porcelain"])

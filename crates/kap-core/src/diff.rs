@@ -53,7 +53,7 @@ impl Repo {
 }
 
 /// Parse one `added\tremoved\tpath` line. Binary files report `-` instead of counts.
-fn parse_numstat_line(line: &str) -> Option<FileChange> {
+pub(crate) fn parse_numstat_line(line: &str) -> Option<FileChange> {
     let mut parts = line.splitn(3, '\t');
     let added = parts.next()?;
     let removed = parts.next()?;

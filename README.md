@@ -91,8 +91,8 @@ decisions are recorded as they happen, and two attempts can be compared before a
 - [x] Evidence attached to decisions, marked observed or merely reported
 - [ ] Snapshots and restore
 - [x] Claude Code adapter through hooks: session briefing, tool events, and a stop-time snapshot
+- [x] Review-gated merge: `kap review` records a verdict, `kap merge` obeys it
 - [ ] Codex adapter and a documented adapter interface for other agents
-- [ ] Review-gated merge
 - [ ] `kap push` / `kap pull` over a separate git ref namespace
 
 ## Getting started
@@ -160,12 +160,18 @@ claude                # work as usual; KAP records what happens
 The hooks call `kap`, so the binary must be on `PATH`. Commit `.claude/settings.json` to share the
 setup with everyone working in the repository.
 
-When the attempt is done, close it and compare it with another attempt:
+When the attempt is done, compare it and decide:
 
 ```sh
-kap attempt close                         # freezes the attempt; a closed attempt records nothing more
 kap diff attempt-… attempt-…              # files changed between two attempts, not their bases
+kap review attempt-…                      # changes vs its base, decisions, evidence, verdict
+kap review attempt-… --approve --note "…" # the review gate: approve this exact commit
+kap merge attempt-…                       # merges it and closes the attempt
 ```
+
+Merging is gated on a review, and the review is pinned to a commit: if the attempt moves after it
+was approved, the approval no longer applies and the merge is refused. `kap attempt close` freezes
+an attempt you do not intend to merge.
 
 
 ## Repository layout

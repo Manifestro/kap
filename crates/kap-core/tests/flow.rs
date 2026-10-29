@@ -8,6 +8,7 @@ use kap_core::evidence::{EvidenceSource, NewEvidence};
 use kap_core::hooks::HookInput;
 use kap_core::model::AttemptState;
 use kap_core::repo::Repo;
+use kap_core::review::Verdict;
 use kap_core::Error;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -40,6 +41,8 @@ fn repository_with_commit() -> (tempfile::TempDir, Repo) {
     git(dir.path(), &["add", "README.md"]);
     git(dir.path(), &["commit", "-m", "initial"]);
     let repo = Repo::init(dir.path()).expect("initialize KAP");
+    git(dir.path(), &["add", ".gitignore"]);
+    git(dir.path(), &["commit", "-m", "ignore the KAP store"]);
     (dir, repo)
 }
 
@@ -653,4 +656,85 @@ fn a_worktree_snapshot_records_each_changed_file_once() {
             .expect("third snapshot"),
         1
     );
+}
+
+fn attempt_with_change(repo: &Repo) -> kap_core::model::Attempt {
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "feature",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write file");
+    git(&attempt.worktree, &["add", "."]);
+    git(&attempt.worktree, &["commit", "-m", "add calc"]);
+    attempt
+}
+
+#[test]
+fn merging_without_a_review_is_refused() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+
+    match repo.merge_attempt(&attempt.id) {
+        Err(Error::MergeNotReviewed { .. }) => {}
+        other => panic!("expected MergeNotReviewed, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_rejected_attempt_cannot_be_merged() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+    repo.review(&attempt.id, Verdict::Rejected, Some("does not handle zero"))
+        .expect("record rejection");
+
+    match repo.merge_attempt(&attempt.id) {
+        Err(Error::MergeRejected { .. }) => {}
+        other => panic!("expected MergeRejected, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_approved_attempt_merges_and_closes() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+
+    let review = repo
+        .review(&attempt.id, Verdict::Approved, Some("small and tested"))
+        .expect("approve");
+    assert!(review.head_commit.starts_with(&attempt.base_commit[..4]) == false);
+    assert_eq!(
+        repo.latest_review(&attempt.id).unwrap().unwrap().verdict,
+        "approved"
+    );
+
+    let outcome = repo.merge_attempt(&attempt.id).expect("merge");
+    assert_eq!(outcome.files, 1);
+    assert!(repo.root().join("calc.py").is_file());
+
+    let merged = repo.attempt(&attempt.id).expect("reload attempt");
+    assert_eq!(merged.state, AttemptState::Closed);
+    assert!(merged.closed_at.is_some());
+}
+
+#[test]
+fn commits_after_approval_invalidate_the_review() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+    repo.review(&attempt.id, Verdict::Approved, None)
+        .expect("approve");
+
+    fs::write(attempt.worktree.join("extra.py"), "x = 1\n").expect("write file");
+    git(&attempt.worktree, &["add", "."]);
+    git(
+        &attempt.worktree,
+        &["commit", "-m", "sneak in another change"],
+    );
+
+    match repo.merge_attempt(&attempt.id) {
+        Err(Error::MergeStaleReview { .. }) => {}
+        other => panic!("expected MergeStaleReview, got {other:?}"),
+    }
 }

@@ -10,6 +10,7 @@ use kap_core::evidence::{EvidenceSource, NewEvidence};
 use kap_core::hooks::HookInput;
 use kap_core::model::{Attempt, Decision, Evidence, ToolEvent};
 use kap_core::repo::Repo;
+use kap_core::review::Verdict;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -64,6 +65,25 @@ enum Command {
     Evidence {
         #[command(subcommand)]
         command: EvidenceCommand,
+    },
+    /// Inspect an attempt and record a verdict
+    Review {
+        /// The attempt to review
+        attempt: String,
+        /// Approve the attempt for merging
+        #[arg(long)]
+        approve: bool,
+        /// Reject the attempt
+        #[arg(long)]
+        reject: bool,
+        /// Note to record with the verdict
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Merge an approved attempt into the current branch
+    Merge {
+        /// The attempt to merge
+        attempt: String,
     },
     /// Compare two attempts
     Diff {
@@ -349,6 +369,52 @@ fn run() -> Result<ExitCode, String> {
             }
         }
 
+        Command::Review {
+            attempt,
+            approve,
+            reject,
+            note,
+        } => {
+            let repo = open_repo()?;
+            if approve && reject {
+                return Err("pass either --approve or --reject, not both".to_string());
+            }
+            if approve || reject {
+                let verdict = if approve {
+                    Verdict::Approved
+                } else {
+                    Verdict::Rejected
+                };
+                let review = repo
+                    .review(&attempt, verdict, note.as_deref())
+                    .map_err(show)?;
+                println!(
+                    "{}  {}  head {}",
+                    review.id,
+                    review.verdict,
+                    short_commit(&review.head_commit)
+                );
+                if let Some(note) = &review.note {
+                    println!("  note: {note}");
+                }
+            }
+            print_review(&repo, &attempt)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Merge { attempt } => {
+            let repo = open_repo()?;
+            let outcome = repo.merge_attempt(&attempt).map_err(show)?;
+            println!(
+                "Merged {} into {} at {} ({} file(s) changed); the attempt is closed",
+                outcome.attempt_id,
+                outcome.branch,
+                short_commit(&outcome.commit),
+                outcome.files
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+
         Command::Diff { from, to } => {
             let repo = open_repo()?;
             let diff = repo.diff_attempts(&from, &to).map_err(show)?;
@@ -562,6 +628,58 @@ fn print_evidence(evidence: &Evidence) {
     if let Some(decision) = &evidence.decision_id {
         println!("  decision: {decision}");
     }
+}
+
+fn print_review(repo: &Repo, attempt_id: &str) -> Result<(), String> {
+    let attempt = repo.attempt(attempt_id).map_err(show)?;
+    let changes = repo.changes_since_base(attempt_id).map_err(show)?;
+    let decisions = repo.decisions(attempt_id).map_err(show)?;
+    let evidence = repo.evidence(attempt_id).map_err(show)?;
+    let review = repo.latest_review(attempt_id).map_err(show)?;
+
+    println!(
+        "{}  {}  base {}",
+        attempt.id,
+        attempt.state,
+        short_commit(&attempt.base_commit)
+    );
+    if let Some(task) = &attempt.task {
+        println!("  task: {task}");
+    }
+
+    println!("  changes vs base:");
+    if changes.is_empty() {
+        println!("    (none)");
+    }
+    for file in &changes {
+        let added = file
+            .added
+            .map(|n| format!("+{n}"))
+            .unwrap_or_else(|| "+?".to_string());
+        let removed = file
+            .removed
+            .map(|n| format!("-{n}"))
+            .unwrap_or_else(|| "-?".to_string());
+        println!("    {added:>7} {removed:>7}  {}", file.path);
+    }
+
+    let observed = evidence.iter().filter(|entry| entry.observed).count();
+    println!("  decisions: {}", decisions.len());
+    println!(
+        "  evidence: {observed} observed, {} reported",
+        evidence.len() - observed
+    );
+
+    match review {
+        Some(review) => println!(
+            "  review: {} by {} at {}",
+            review.verdict,
+            review.reviewer,
+            short_commit(&review.head_commit)
+        ),
+        None => println!("  review: none — `kap review {attempt_id} --approve` allows merging"),
+    }
+    Ok(())
 }
 
 fn print_diff(diff: &AttemptDiff) {
