@@ -1,0 +1,15 @@
+[package]
+name = "kap-cli"
+description = "Command-line interface for KAP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kap"
+path = "src/main.rs"
+
+[dependencies]
+kap-core = { workspace = true }
+clap = { workspace = true }

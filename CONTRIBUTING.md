@@ -24,14 +24,11 @@ KAP is written in Rust and targets the current stable toolchain.
 3. Clone the repository and verify the workspace builds:
 
    ```sh
-   git clone <repository-url> kap
+   git clone https://github.com/Manifestro/kap.git
    cd kap
    cargo build
    cargo test
    ```
-
-The Cargo workspace is being established; if `cargo build` reports that it cannot find a manifest,
-the initial crates have not landed yet — check open issues for the current state.
 
 ## Code style
 

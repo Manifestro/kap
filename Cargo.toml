@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/kap-core", "crates/kap-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Manifestro/kap"
+
+[workspace.dependencies]
+kap-core = { path = "crates/kap-core" }
+
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting"] }
+ulid = "3"
+
+tempfile = "3"

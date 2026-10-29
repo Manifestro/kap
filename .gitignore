@@ -25,3 +25,6 @@
 # Logs and coverage
 *.log
 /coverage/
+
+# Local cargo home used when building inside a sandbox
+/.cargo-home/

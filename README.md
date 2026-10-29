@@ -77,22 +77,50 @@ it and the evidence that backs it.
 
 ## Status
 
-Pre-alpha, design phase. What exists today:
+Pre-alpha. The first vertical slice works: `kap init` creates the store, and `kap attempt start`
+gives an attempt its own branch and worktree while recording it.
 
 - [x] Repository, license, and contribution guide
 - [x] Architecture and core concepts documented
-- [ ] Cargo workspace and core crate
-- [ ] SQLite schema for events, decisions, and evidence
-- [ ] Worktree-based isolation and attempt lifecycle
-- [ ] `kap` CLI skeleton
-- [ ] Adapter interface and a first adapter (Claude Code or Codex)
+- [x] Cargo workspace, core crate, and CLI skeleton
+- [x] SQLite schema for attempts, runs, tool events, decisions, and evidence
+- [x] Worktree-based isolation, `kap init`, `kap attempt start`, `kap attempt list`
+- [ ] Tool-event capture and evidence recording
+- [ ] Decisions: recording rationale and rejected alternatives
 - [ ] Snapshots, diff between attempts, and restore
-- [ ] Merge and conflict handling
+- [ ] Adapter interface and a first adapter (Claude Code or Codex)
+- [ ] Review-gated merge
+- [ ] `kap push` / `kap pull` over a separate git ref namespace
 
 ## Getting started
 
-Not available yet. Once the first components land, this section will cover installation and a
-minimal end-to-end example.
+KAP is built from source. You need [Rust](https://rustup.rs/) and `git`.
+
+```sh
+git clone https://github.com/Manifestro/kap.git
+cd kap
+cargo build --release
+```
+
+Then, inside a git repository that has at least one commit:
+
+```sh
+cp target/release/kap /usr/local/bin/     # or put it anywhere on PATH
+kap init                                  # creates .kap/ and ignores it in .gitignore
+kap attempt start fix-parser \
+  --task "make the parser accept trailing commas"
+```
+
+`kap attempt start` creates a branch `kap/attempt-…` and a worktree under `.kap/worktrees/`, then
+prints where to work. `kap attempt list` shows the attempts recorded so far.
+
+## Repository layout
+
+```text
+crates/kap-core   # storage, worktrees, and the attempt lifecycle
+crates/kap-cli    # the `kap` binary
+docs/             # architecture and design notes
+```
 
 ## Contributing
 

@@ -1,0 +1,16 @@
+[package]
+name = "kap-core"
+description = "Core library for KAP: isolation, history, and decisions for work done by AI agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
