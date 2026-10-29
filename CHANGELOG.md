@@ -9,6 +9,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Hooks could fail the agent's turn: malformed or empty input, a missing session id, or a locked
+  database produced a non-zero exit that Claude Code surfaced. Hooks now always exit 0 and record
+  the failure in `.kap/logs/hooks.log`.
+- A tool call delivery could be recorded twice; event ids are derived from the tool call's id, and
+  duplicates are ignored by the database.
+- SQLite had no busy timeout, so a hook could fail with "database is locked" while another command
+  was writing. Writers now wait up to five seconds.
+- A malformed object address panicked; it is now an error.
+- Command output was buffered whole. Streams are capped at 8 MiB and marked when truncated, and a
+  snapshot skips files over 16 MiB.
+- A file edit was recorded twice — once by the hook under an absolute path, once by the stop
+  snapshot under a relative one. Paths are now relative to the worktree, and evidence is
+  deduplicated by content.
 - `kap push` with nothing new to export failed with a bare git error; it now reports that there is
   nothing to push.
 - Git failures that git explains on stdout — an empty commit, for example — were reported with an

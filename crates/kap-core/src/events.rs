@@ -4,6 +4,9 @@ use crate::error::{Error, Result};
 use crate::model::{new_id, now_rfc3339, AttemptState, ToolEvent};
 use crate::repo::Repo;
 
+/// Largest payload kept for one stream; beyond this the command produced more than KAP will store.
+const MAX_STREAM_BYTES: usize = 8 * 1024 * 1024;
+
 /// The result of a command run inside an attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecOutput {
@@ -57,6 +60,9 @@ impl Repo {
     ) -> Result<ToolEvent> {
         let objects = self.objects();
 
+        let stdout = cap(stdout.to_vec());
+        let stderr = cap(stderr.to_vec());
+
         let event = ToolEvent {
             id: format!("event-{}", new_id()),
             attempt_id: attempt_id.to_string(),
@@ -64,8 +70,8 @@ impl Repo {
             kind: "command".to_string(),
             command: Some(command.join(" ")),
             exit_code: Some(exit_code),
-            stdout_hash: Some(objects.put(stdout)?),
-            stderr_hash: Some(objects.put(stderr)?),
+            stdout_hash: Some(objects.put(&stdout)?),
+            stderr_hash: Some(objects.put(&stderr)?),
             observed: true,
             occurred_at: now_rfc3339(),
         };
@@ -78,4 +84,12 @@ impl Repo {
     pub fn tool_events(&self, attempt_id: Option<&str>) -> Result<Vec<ToolEvent>> {
         self.db()?.tool_events(attempt_id)
     }
+}
+
+fn cap(mut bytes: Vec<u8>) -> Vec<u8> {
+    if bytes.len() > MAX_STREAM_BYTES {
+        bytes.truncate(MAX_STREAM_BYTES);
+        bytes.extend_from_slice(b"\n[kap: output truncated]\n");
+    }
+    bytes
 }

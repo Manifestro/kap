@@ -613,7 +613,10 @@ fn print_decision(decision: &Decision) {
 }
 
 fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
-    let cwd = std::env::current_dir().map_err(show)?;
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return Ok(ExitCode::SUCCESS),
+    };
 
     if matches!(command, HookCommand::Setup) {
         // Write into the checkout the agent actually runs in. Inside a worktree that is the
@@ -627,9 +630,10 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
     }
 
     let mut json = String::new();
-    std::io::stdin().read_to_string(&mut json).map_err(show)?;
+    let _ = std::io::stdin().read_to_string(&mut json);
 
-    // A hook must never break the agent's session: outside a KAP repository it simply does nothing.
+    // A hook must never break the agent's session. Outside a KAP repository there is nothing to
+    // record, and inside one a failure is logged rather than shown to the agent.
     let Ok(repo) = Repo::open(&cwd) else {
         return Ok(ExitCode::SUCCESS);
     };
@@ -637,8 +641,16 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     };
 
-    let input = HookInput::parse(&json).map_err(show)?;
-    let attempt = repo.attempt(&attempt_id).map_err(show)?;
+    if let Err(message) = run_hook(&repo, &attempt_id, command, &json) {
+        log_hook_failure(&repo, &message);
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_hook(repo: &Repo, attempt_id: &str, command: HookCommand, json: &str) -> Result<(), String> {
+    let input = HookInput::parse(json).map_err(show)?;
+    let attempt = repo.attempt(attempt_id).map_err(show)?;
 
     match command {
         HookCommand::SessionStart => {
@@ -653,24 +665,39 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
         }
         HookCommand::PostToolUse | HookCommand::PostToolUseFailure => {
             let run = repo
-                .run_for_session(&attempt_id, &input.session_id)
+                .run_for_session(attempt_id, input.session())
                 .map_err(show)?;
             let failed = matches!(command, HookCommand::PostToolUseFailure);
             repo.record_hook_event(&attempt, &run.id, &input, failed)
                 .map_err(show)?;
         }
         HookCommand::Stop => {
-            repo.finish_run_for_session(&input.session_id, "completed")
+            repo.finish_run_for_session(input.session(), "completed")
                 .map_err(show)?;
-            let recorded = repo.record_worktree_snapshot(&attempt).map_err(show)?;
-            if recorded > 0 {
-                eprintln!("kap: recorded {recorded} changed file(s) as evidence");
-            }
+            repo.record_worktree_snapshot(&attempt).map_err(show)?;
         }
         HookCommand::Setup => unreachable!("setup is handled before reading stdin"),
     }
 
-    Ok(ExitCode::SUCCESS)
+    Ok(())
+}
+
+/// Record a hook failure without disturbing the agent. The file is the only place to look when
+/// something silently stops being recorded.
+fn log_hook_failure(repo: &Repo, message: &str) {
+    let dir = repo.kap_dir().join("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+
+    let path = dir.join("hooks.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "{}  {message}", kap_core::model::now_rfc3339());
+    }
 }
 
 const HOOK_EVENTS: &[(&str, &str)] = &[

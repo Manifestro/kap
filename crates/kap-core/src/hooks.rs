@@ -4,12 +4,20 @@ use crate::error::{Error, Result};
 use crate::model::{new_id, now_rfc3339, Attempt, Evidence, Run, ToolEvent};
 use crate::repo::Repo;
 
+/// Largest payload stored for one output stream. Anything larger is cut and marked, so a runaway
+/// command cannot exhaust memory or fill the disk mid-session.
+const MAX_STREAM_BYTES: usize = 8 * 1024 * 1024;
+
+/// Largest file a working-tree snapshot will read.
+const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
 /// One tool call's worth of Claude Code hook input.
 ///
-/// Hook input arrives as JSON on stdin. Only the fields KAP uses are modelled; the rest is
-/// ignored, so a newer Claude Code cannot break recording by adding fields.
+/// Only the fields KAP uses are modelled and every one of them is optional: a newer Claude Code
+/// must not be able to break recording by changing or dropping a field.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookInput {
+    #[serde(default)]
     pub session_id: String,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -22,6 +30,8 @@ pub struct HookInput {
     #[serde(default)]
     pub tool_response: serde_json::Value,
     #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -29,6 +39,15 @@ impl HookInput {
     /// Parse hook input.
     pub fn parse(json: &str) -> Result<HookInput> {
         serde_json::from_str(json).map_err(|source| Error::HookPayload { source })
+    }
+
+    /// A session id that is always usable, even when the harness did not send one.
+    pub fn session(&self) -> &str {
+        if self.session_id.is_empty() {
+            "unknown-session"
+        } else {
+            &self.session_id
+        }
     }
 }
 
@@ -66,9 +85,9 @@ impl Repo {
 
     /// Record what a hook observed.
     ///
-    /// Returns `None` when the event carries nothing KAP can attest to. Commands keep their
-    /// output as objects; file edits additionally produce evidence, because a file's content is
-    /// something KAP can hash and check later.
+    /// Returns `None` when the event carries nothing KAP can attest to. Commands keep their output
+    /// as objects; file edits additionally produce evidence, because a file's content is something
+    /// KAP can hash and check later.
     pub fn record_hook_event(
         &self,
         attempt: &Attempt,
@@ -81,7 +100,7 @@ impl Repo {
         };
 
         let objects = self.objects();
-        let (kind, command, exit_code, mut stdout, mut stderr) = describe(tool, input, failed);
+        let (kind, mut command, exit_code, stdout, mut stderr) = describe(tool, input, failed);
 
         if let Some(error) = &input.error {
             if !stderr.is_empty() {
@@ -91,20 +110,31 @@ impl Repo {
         }
 
         let mut artifact_hash = None;
+        let mut path = None;
         if is_file_write(tool) {
-            if let Some(path) = input
+            if let Some(file) = input
                 .tool_input
                 .get("file_path")
                 .and_then(|value| value.as_str())
             {
-                if let Ok(bytes) = std::fs::read(path) {
-                    artifact_hash = Some(objects.put(&bytes)?);
+                let relative = relative_to(&attempt.worktree, file);
+                command = format!("{tool} {relative}");
+                path = Some(relative);
+                if let Ok(metadata) = std::fs::metadata(file) {
+                    if metadata.len() <= MAX_FILE_BYTES {
+                        if let Ok(bytes) = std::fs::read(file) {
+                            artifact_hash = Some(objects.put(&bytes)?);
+                        }
+                    }
                 }
             }
         }
 
+        let stdout = truncate(stdout);
+        let stderr = truncate(stderr);
+
         let event = ToolEvent {
-            id: format!("event-{}", new_id()),
+            id: event_id(attempt, input),
             attempt_id: attempt.id.clone(),
             run_id: Some(run_id.to_string()),
             kind: kind.to_string(),
@@ -123,7 +153,6 @@ impl Repo {
             observed: true,
             occurred_at: now_rfc3339(),
         };
-        stdout.clear();
 
         let db = self.db()?;
         db.insert_tool_event(&event)?;
@@ -137,11 +166,7 @@ impl Repo {
                 command: Some(command),
                 exit_code: None,
                 artifact_hash: Some(hash),
-                path: input
-                    .tool_input
-                    .get("file_path")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
+                path,
                 observed: true,
                 complete: true,
                 recorded_at: now_rfc3339(),
@@ -203,6 +228,43 @@ impl Repo {
         );
         Ok(out)
     }
+}
+
+/// A tool call's id, derived from the call itself when the harness identifies it.
+///
+/// Claude Code delivers a tool call once, but a retry or a duplicated hook must not double the
+/// history: the same call maps to the same row, and the insert ignores it the second time.
+fn event_id(attempt: &Attempt, input: &HookInput) -> String {
+    match input.tool_use_id.as_deref() {
+        Some(tool_use_id) if !tool_use_id.is_empty() => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(attempt.id.as_bytes());
+            hasher.update(b"|");
+            hasher.update(input.session().as_bytes());
+            hasher.update(b"|");
+            hasher.update(tool_use_id.as_bytes());
+            let hex = hasher.finalize().to_hex().to_string();
+            format!("event-{}", &hex[..24])
+        }
+        _ => format!("event-{}", new_id()),
+    }
+}
+
+/// Paths are stored relative to the attempt's worktree: they survive a move to another machine and
+/// an edit recorded by a hook deduplicates against the same file seen by a later snapshot.
+fn relative_to(worktree: &std::path::Path, file: &str) -> String {
+    std::path::Path::new(file)
+        .strip_prefix(worktree)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| file.to_string())
+}
+
+fn truncate(mut bytes: Vec<u8>) -> Vec<u8> {
+    if bytes.len() > MAX_STREAM_BYTES {
+        bytes.truncate(MAX_STREAM_BYTES);
+        bytes.extend_from_slice(b"\n[kap: output truncated]\n");
+    }
+    bytes
 }
 
 fn is_file_write(tool: &str) -> bool {

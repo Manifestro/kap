@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, Row};
 
@@ -131,6 +132,9 @@ impl Db {
     /// Open the database at `path`, creating it and applying pending migrations if needed.
     pub fn open(path: &Path) -> Result<Db> {
         let conn = Connection::open(path).map_err(|e| Error::db(path, e))?;
+        // Hooks fire while other commands may be writing; waiting beats failing the agent's turn.
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(|e| Error::db(path, e))?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| Error::db(path, e))?;
         conn.pragma_update(None, "foreign_keys", "ON")
@@ -210,8 +214,8 @@ impl Db {
     pub fn insert_tool_event(&self, event: &ToolEvent) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO tool_events (id, attempt_id, run_id, kind, command, exit_code, \
-                 output_hash, stderr_hash, observed, occurred_at) \
+                "INSERT OR IGNORE INTO tool_events (id, attempt_id, run_id, kind, command, \
+                 exit_code, output_hash, stderr_hash, observed, occurred_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 rusqlite::params![
                     event.id,
@@ -431,6 +435,20 @@ impl Db {
             )
             .map_err(|e| Error::db(&self.path, e))?;
         Ok(())
+    }
+
+    /// Whether this attempt already has evidence with this artifact.
+    pub fn evidence_has_hash(&self, attempt_id: &str, hash: &str) -> Result<bool> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM evidence WHERE attempt_id = ?1 AND artifact_hash = ?2 LIMIT 1",
+                rusqlite::params![attempt_id, hash],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(found.is_some())
     }
 
     /// The hash most recently recorded for a path in this attempt.

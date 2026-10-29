@@ -130,6 +130,11 @@ impl Repo {
             };
 
             let hash = objects.put(&bytes)?;
+            // Same content, however it got here: the hook may have recorded this file under a
+            // different path, and a snapshot must not duplicate it.
+            if db.evidence_has_hash(&attempt.id, &hash)? {
+                continue;
+            }
             if db.last_evidence_hash(&attempt.id, &path)?.as_deref() == Some(hash.as_str()) {
                 continue;
             }

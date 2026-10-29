@@ -931,3 +931,109 @@ fn closing_an_attempt_propagates_to_other_machines() {
         AttemptState::Closed
     );
 }
+
+#[test]
+fn a_duplicate_hook_delivery_is_recorded_once() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "dedupe",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let json = r#"{"session_id":"s-dup","hook_event_name":"PostToolUse","tool_name":"Bash",
+                   "tool_use_id":"toolu_01","tool_input":{"command":"echo once"},
+                   "tool_response":{"stdout":"once\n","stderr":""}}"#;
+
+    for _ in 0..3 {
+        let input = HookInput::parse(json).expect("parse");
+        let run = repo
+            .run_for_session(&attempt.id, input.session())
+            .expect("run");
+        repo.record_hook_event(&attempt, &run.id, &input, false)
+            .expect("record");
+    }
+
+    let events = repo.tool_events(Some(&attempt.id)).expect("events");
+    assert_eq!(
+        events.len(),
+        1,
+        "the same tool call must not be recorded three times"
+    );
+}
+
+#[test]
+fn a_hook_without_a_session_id_still_records() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "no session",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let input = HookInput::parse(
+        r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"echo x"},
+            "tool_response":{"stdout":"x\n"}}"#,
+    )
+    .expect("parse");
+
+    assert_eq!(input.session(), "unknown-session");
+    let run = repo
+        .run_for_session(&attempt.id, input.session())
+        .expect("run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, false)
+        .expect("record")
+        .expect("event");
+    assert_eq!(event.kind, "command");
+}
+
+#[test]
+fn an_oversized_command_output_is_truncated_and_marked() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "huge",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let huge = "x".repeat(9 * 1024 * 1024);
+    let json = format!(
+        r#"{{"session_id":"s-big","hook_event_name":"PostToolUse","tool_name":"Bash",
+             "tool_use_id":"toolu_big","tool_input":{{"command":"yes"}},
+             "tool_response":{{"stdout":"{huge}"}}}}"#
+    );
+    let input = HookInput::parse(&json).expect("parse");
+    let run = repo
+        .run_for_session(&attempt.id, input.session())
+        .expect("run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, false)
+        .expect("record")
+        .expect("event");
+
+    let stored = repo
+        .objects()
+        .get(event.stdout_hash.as_deref().expect("stdout"))
+        .expect("read object");
+    assert!(stored.len() < 9 * 1024 * 1024);
+    assert!(stored.ends_with(b"[kap: output truncated]\n"));
+}
+
+#[test]
+fn a_malformed_object_address_is_an_error_not_a_panic() {
+    let (_dir, repo) = repository_with_commit();
+
+    for address in ["blake3:zz", "blake3:", "not-an-address", "blake3:a"] {
+        assert!(
+            repo.objects().get(address).is_err(),
+            "{address} should be rejected"
+        );
+    }
+}

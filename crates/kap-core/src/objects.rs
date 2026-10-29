@@ -58,14 +58,23 @@ impl ObjectStore {
     }
 
     fn path_for(&self, hex: &str) -> PathBuf {
-        self.root.join(&hex[..2]).join(&hex[2..])
+        // Defensive: never slice past the end, even if a caller hands us a short address.
+        let split = 2.min(hex.len());
+        self.root.join(&hex[..split]).join(&hex[split..])
     }
 }
 
 fn hex_of(address: &str) -> Result<&str> {
-    address
+    let hex = address
         .strip_prefix("blake3:")
         .ok_or_else(|| Error::InvalidObjectAddress {
             address: address.to_string(),
-        })
+        })?;
+
+    if hex.len() < 3 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(Error::InvalidObjectAddress {
+            address: address.to_string(),
+        });
+    }
+    Ok(hex)
 }
