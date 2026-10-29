@@ -151,6 +151,22 @@ impl Db {
         Ok(db)
     }
 
+    /// The schema version this database is at.
+    pub fn schema_version(&self) -> Result<i64> {
+        self.conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| Error::db(&self.path, e))
+    }
+
+    /// When the newest event was recorded, if there is one.
+    pub fn last_event_at(&self) -> Result<Option<String>> {
+        self.conn
+            .query_row("SELECT MAX(occurred_at) FROM tool_events", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .map_err(|e| Error::db(&self.path, e))
+    }
+
     /// Record a new attempt.
     pub fn insert_attempt(&self, attempt: &Attempt) -> Result<()> {
         self.conn

@@ -15,6 +15,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recording can be switched off without uninstalling: `KAP_DISABLED=1` for one session, `kap
   disable` and `kap enable` for a repository.
 
+### Added
+
+- `kap doctor` checks that recording is actually wired: the hooks exist in a settings file, the
+  binary they call still exists, recording is not disabled, and the current directory is one where
+  hooks record. It exits non-zero when something is missing.
+- `kap status` says whether the hooks are installed and whether recording is disabled here.
+
 ### Changed
 
 - A run no longer records which harness produced it. KAP talks to hooks, not to Claude Code: any

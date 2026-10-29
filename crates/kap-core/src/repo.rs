@@ -74,6 +74,16 @@ impl Repo {
         self.kap_dir().join(DB_FILE)
     }
 
+    /// The schema version of this repository's database.
+    pub fn schema_version(&self) -> Result<i64> {
+        self.db()?.schema_version()
+    }
+
+    /// When the newest recorded event happened.
+    pub fn last_event_at(&self) -> Result<Option<String>> {
+        self.db()?.last_event_at()
+    }
+
     /// Content-addressed storage for command output and other payloads.
     pub fn objects(&self) -> ObjectStore {
         ObjectStore::new(self.kap_dir().join("objects"))

@@ -33,6 +33,8 @@ enum Command {
     },
     /// Show where you are and what is recorded
     Status,
+    /// Check that recording is wired up, before any work happens
+    Doctor,
     /// Work with attempts
     Attempt {
         #[command(subcommand)]
@@ -299,6 +301,8 @@ fn run() -> Result<ExitCode, String> {
             print_status(&repo)?;
             Ok(ExitCode::SUCCESS)
         }
+
+        Command::Doctor => print_doctor(),
 
         Command::Attempt { command } => {
             let repo = open_repo()?;
@@ -977,6 +981,228 @@ fn hook_command(binary: &Path, subcommand: &str) -> String {
     }
 }
 
+/// What a settings file says about KAP's hooks.
+struct HooksCheck {
+    path: PathBuf,
+    events: Vec<&'static str>,
+    binary: Option<PathBuf>,
+    binary_exists: bool,
+}
+
+impl HooksCheck {
+    fn complete(&self) -> bool {
+        self.events.len() == HOOK_EVENTS.len()
+    }
+}
+
+fn inspect_hooks(path: &Path) -> Option<HooksCheck> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let settings: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let hooks = settings.get("hooks")?.as_object()?;
+
+    let mut events = Vec::new();
+    let mut binary: Option<PathBuf> = None;
+
+    for (event, subcommand) in HOOK_EVENTS {
+        let suffix = format!("hook {subcommand}");
+        let entries = hooks.get(*event).and_then(|value| value.as_array());
+
+        let hit = entries
+            .map(|entries| {
+                entries.iter().any(|entry| {
+                    entry
+                        .get("hooks")
+                        .and_then(|hooks| hooks.as_array())
+                        .map(|hooks| {
+                            hooks.iter().any(|hook| {
+                                hook.get("command")
+                                    .and_then(|value| value.as_str())
+                                    .map(|command| command.trim_end().ends_with(&suffix))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        if hit {
+            events.push(*event);
+        }
+
+        if binary.is_none() {
+            if let Some(command) = entries.and_then(|entries| {
+                entries.iter().find_map(|entry| {
+                    entry
+                        .get("hooks")
+                        .and_then(|hooks| hooks.as_array())
+                        .and_then(|hooks| hooks.first())
+                        .and_then(|hook| hook.get("command"))
+                        .and_then(|value| value.as_str())
+                })
+            }) {
+                if let Some((program, _)) = command.split_once(" hook ") {
+                    binary = Some(PathBuf::from(program.trim().trim_matches('"')));
+                }
+            }
+        }
+    }
+
+    let binary_exists = binary.as_ref().map(|path| path.exists()).unwrap_or(false);
+
+    Some(HooksCheck {
+        path: path.to_path_buf(),
+        events,
+        binary,
+        binary_exists,
+    })
+}
+
+/// Every settings file that could carry KAP's hooks, most specific first.
+fn hook_settings_candidates(repo: &Repo) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(user) = claude_settings_path() {
+        paths.push(user);
+    }
+
+    paths.push(repo.root().join(".claude").join("settings.json"));
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(attempt) = attempt_at(repo, &cwd) {
+            if let Ok(attempt) = repo.attempt(&attempt) {
+                paths.push(attempt.worktree.join(".claude").join("settings.json"));
+            }
+        }
+    }
+
+    paths
+}
+
+fn print_doctor() -> Result<ExitCode, String> {
+    let cwd = std::env::current_dir().map_err(show)?;
+
+    let Ok(repo) = Repo::open(&cwd) else {
+        println!("repo:    not initialized here");
+        println!("         run `kap init` in the repository first");
+        return Ok(ExitCode::FAILURE);
+    };
+
+    let mut ready = true;
+
+    println!("repo:     {}", repo.root().display());
+    match repo.schema_version() {
+        Ok(version) => println!("store:    {} (schema {version})", repo.kap_dir().display()),
+        Err(error) => {
+            println!(
+                "store:    {} (unreadable: {error})",
+                repo.kap_dir().display()
+            );
+            ready = false;
+        }
+    }
+
+    let checks: Vec<HooksCheck> = hook_settings_candidates(&repo)
+        .iter()
+        .filter_map(|path| inspect_hooks(path))
+        .collect();
+
+    let complete = checks.iter().find(|check| check.complete());
+    match complete {
+        Some(check) => {
+            let binary = check
+                .binary
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            if check.binary_exists {
+                println!("hooks:    {} (all four, {binary})", check.path.display());
+            } else {
+                println!(
+                    "hooks:    {} (all four, but {binary} does not exist)",
+                    check.path.display()
+                );
+                ready = false;
+            }
+        }
+        None => {
+            if checks.is_empty() {
+                println!("hooks:    none found");
+                println!("          run `kap install`");
+                ready = false;
+            } else {
+                for check in &checks {
+                    println!(
+                        "hooks:    {} has {}/{} ({})",
+                        check.path.display(),
+                        check.events.len(),
+                        HOOK_EVENTS.len(),
+                        check.events.join(", ")
+                    );
+                }
+                println!("          run `kap install` to complete them");
+                ready = false;
+            }
+        }
+    }
+
+    let disabled = repo.kap_dir().join("disabled").exists();
+    if disabled {
+        println!("recording: disabled in this repository (`kap enable`)");
+        ready = false;
+    } else if recording_disabled() {
+        println!("recording: disabled for this shell (KAP_DISABLED)");
+        ready = false;
+    } else {
+        println!("recording: enabled");
+    }
+
+    let in_worktree = attempt_at(&repo, &cwd);
+    match &in_worktree {
+        Some(attempt_id) => {
+            let attempt = repo.attempt(attempt_id).map_err(show)?;
+            println!("location: attempt {attempt_id} ({})", attempt.label);
+        }
+        None => {
+            println!("location: main checkout");
+            println!("          hooks record only inside an attempt worktree");
+            println!("          `kap attempt start` creates one");
+        }
+    }
+
+    match repo.last_event_at().map_err(show)? {
+        Some(timestamp) => println!("last event: {timestamp}"),
+        None => println!("last event: never"),
+    }
+
+    let log = repo.kap_dir().join("logs").join("hooks.log");
+    if let Ok(text) = std::fs::read_to_string(&log) {
+        let lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
+        if !lines.is_empty() {
+            println!(
+                "hook errors: {} (last: {})",
+                lines.len(),
+                lines.last().unwrap_or(&"")
+            );
+        }
+    }
+
+    println!();
+    if !ready {
+        println!("result:   not recording — fix the lines above");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if in_worktree.is_none() {
+        println!("result:   wired, but this directory is not recorded");
+        println!("          start an attempt and work in its worktree");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    println!("result:   ready — this session will be recorded");
+    Ok(ExitCode::SUCCESS)
+}
+
 fn print_status(repo: &Repo) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(show)?;
     let machine = repo.machine_id().map_err(show)?;
@@ -984,6 +1210,17 @@ fn print_status(repo: &Repo) -> Result<(), String> {
     println!("repo:    {}", repo.root().display());
     println!("store:   {}", repo.kap_dir().display());
     println!("machine: {machine}");
+
+    let wired = hook_settings_candidates(repo)
+        .iter()
+        .filter_map(|path| inspect_hooks(path))
+        .any(|check| check.complete() && check.binary_exists);
+    let disabled = repo.kap_dir().join("disabled").exists();
+    match (wired, disabled) {
+        (_, true) => println!("hooks:   installed, recording disabled here (`kap enable`)"),
+        (true, false) => println!("hooks:   installed"),
+        (false, false) => println!("hooks:   not installed (`kap install`)"),
+    }
 
     match attempt_at(repo, &cwd) {
         Some(attempt_id) => {
