@@ -3,6 +3,9 @@
 Thanks for considering a contribution. KAP is an early-stage project, so the most valuable
 contributions right now are design discussions and clearly scoped patches — not large rewrites.
 
+By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Please report
+security issues through [SECURITY.md](SECURITY.md), never in a public issue.
+
 ## Before you start
 
 - **Open an issue first** for anything larger than a bug fix or a small improvement: new features,
@@ -67,6 +70,11 @@ coherent — that is about the project, not about you.
 
 By submitting a pull request you agree that your contribution is licensed under the
 [MIT License](LICENSE), the same terms as the rest of the project.
+
+## Security
+
+Do not open a public issue for a vulnerability. [SECURITY.md](SECURITY.md) explains the private
+reporting channel and what is in scope.
 
 ## Questions
 

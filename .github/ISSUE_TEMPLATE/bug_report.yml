@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in KAP does not do what it says
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste secrets, tokens, or private command output.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, from a clean repository if possible.
+      placeholder: |
+        kap init
+        kap attempt start demo
+        kap exec -- false
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KAP version
+      description: Output of `kap --version`.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, git version, and Rust version (`cargo --version`).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Error messages or `kap log` output. Remove anything private.
+    validations:
+      required: false

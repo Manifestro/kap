@@ -27,5 +27,8 @@ jobs:
       - name: Lints
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Documentation
+        run: cargo doc --no-deps --workspace
+
       - name: Tests
         run: cargo test --all

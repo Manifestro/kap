@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a capability KAP does not have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that KAP makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: The shape of a solution, if you have one. Alternatives you considered are welcome.
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fit with the design
+      description: KAP is a recording layer, not an agent runtime. See docs/ARCHITECTURE.md.
+      options:
+        - label: This does not require KAP to host a model or drive an agent's loop
+          required: false

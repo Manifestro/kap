@@ -241,11 +241,16 @@ Names, flags, and grouping will change. The list exists to keep scope honest.
 
 ## 10. Open questions
 
-1. **How the adapter asks for a decision.** Prompt injection, a tool call, or a post-run
-   interrogation — and how much KAP should insist on an explanation before closing an attempt.
-2. **Merge conflicts.** The review gate is decided; what review does when two attempts touch the
-   same file is not.
-3. **Multi-user use.** Whether several people share one `.kap/`, and how identity and authorship
-   are attributed across them.
-4. **Object retention.** Snapshots and artifacts grow without bound; when they may be pruned
-   without breaking reproducibility.
+1. **How an adapter asks for a decision.** The Claude Code briefing currently tells the agent to
+   call `kap decision add`; nothing enforces it, so an agent can finish without recording a reason.
+   A tool call or a post-run interrogation might fit better.
+2. **Merge conflicts.** Merging aborts on conflict and leaves the tree as it was, which is safe but
+   blunt. A guided resolution — showing the conflict next to the evidence — is still open.
+3. **Multi-user use.** Machines are distinguished by a generated id, but people are not: authorship
+   comes from the git user name. Whether several people should share one `.kap/` is unresolved.
+4. **Object retention.** Snapshots and artifacts grow without bound; when they may be pruned without
+   breaking reproducibility is not decided.
+5. **A second adapter.** Codex exposes `codex exec --json` and its own hooks; which shape fits KAP
+   better has not been tried.
+6. **Snapshot lineage.** A restored attempt does not record which snapshot it came from, so the
+   connection exists in the refs but not in the history.

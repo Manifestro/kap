@@ -6,7 +6,11 @@ members = ["crates/kap-core", "crates/kap-cli"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+authors = ["Manifestro"]
 repository = "https://github.com/Manifestro/kap"
+homepage = "https://github.com/Manifestro/kap"
+keywords = ["agents", "ai", "versioning", "provenance"]
+categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 kap-core = { path = "crates/kap-core" }

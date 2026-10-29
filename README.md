@@ -2,14 +2,18 @@
 
 **An open-source multi-agent platform for research and development.**
 
-KAP lets autonomous AI agents — Claude Code, Codex, and custom agents of your own — work on the
-same problem together: propose hypotheses, run experiments, review each other's work, and defend
-their conclusions inside isolated workspaces.
+KAP lets autonomous AI agents work on the same problem together: propose hypotheses, run
+experiments, review each other's work, and defend their conclusions inside isolated workspaces.
+Claude Code is supported today; Codex and other harnesses are next.
 
 Git records *what* changed. KAP records *why*.
 
-> **Status: pre-alpha.** KAP is at the design stage. There is nothing to install or run yet. The
-> concepts, data model, and interfaces below are working drafts and will change.
+[![CI](https://github.com/Manifestro/kap/actions/workflows/ci.yml/badge.svg)](https://github.com/Manifestro/kap/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> **Status: pre-alpha.** The loop works end to end with Claude Code: attempts, recorded commands and
+> decisions, evidence, snapshots, review, and merge. The data model and the CLI are still settling,
+> and there are no releases yet — but everything described below runs today.
 
 ## The problem
 
@@ -102,13 +106,12 @@ KAP is built from source. You need [Rust](https://rustup.rs/) and `git`.
 ```sh
 git clone https://github.com/Manifestro/kap.git
 cd kap
-cargo build --release
+cargo install --path crates/kap-cli   # installs `kap` into ~/.cargo/bin
 ```
 
 Then, inside a git repository that has at least one commit:
 
 ```sh
-cp target/release/kap /usr/local/bin/     # or put it anywhere on PATH
 kap init                                  # creates .kap/ and ignores it in .gitignore
 kap attempt start fix-parser \
   --task "make the parser accept trailing commas"
@@ -204,7 +207,7 @@ monotonically across machines: a closed attempt stays closed, and a stale export
 ## Repository layout
 
 ```text
-crates/kap-core   # storage, worktrees, and the attempt lifecycle
+crates/kap-core   # storage, worktrees, hooks, sync, and the attempt lifecycle
 crates/kap-cli    # the `kap` binary
 docs/             # architecture and design notes
 ```
@@ -212,8 +215,9 @@ docs/             # architecture and design notes
 ## Contributing
 
 KAP is written in Rust. Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-development setup and the pull request process. By participating you agree to follow the project's
-code of conduct (to be added).
+development setup and the pull request process. By participating you agree to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through
+[SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
