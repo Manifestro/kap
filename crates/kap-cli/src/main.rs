@@ -439,8 +439,8 @@ fn run() -> Result<ExitCode, String> {
                 println!("Nothing to pull from {remote}.");
             } else {
                 println!(
-                    "Pulled {} new rows and {} objects from {} machine ref(s) on {remote}",
-                    report.rows, report.objects, report.refs
+                    "Pulled {} new rows, {} updated, {} objects from {} machine ref(s) on {remote}",
+                    report.rows, report.updated, report.objects, report.refs
                 );
             }
             Ok(ExitCode::SUCCESS)

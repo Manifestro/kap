@@ -184,6 +184,12 @@ impl Git {
         Ok(())
     }
 
+    /// Whether a ref exists.
+    pub fn ref_exists(&self, reference: &str) -> Result<bool> {
+        let output = self.output(&["rev-parse", "--verify", "--quiet", reference])?;
+        Ok(output.status.success())
+    }
+
     /// Ref names under a prefix.
     pub fn refs_under(&self, prefix: &str) -> Result<Vec<String>> {
         let out = self.run(&["for-each-ref", "--format=%(refname)", prefix])?;

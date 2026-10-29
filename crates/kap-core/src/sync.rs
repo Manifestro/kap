@@ -15,6 +15,8 @@ const REMOTE_PREFIX: &str = "refs/kap/remote/";
 pub struct SyncReport {
     /// History rows that were written or imported.
     pub rows: usize,
+    /// Rows that already existed and whose lifecycle moved forward.
+    pub updated: usize,
     /// Objects that were transferred.
     pub objects: usize,
     /// Machine refs that were pushed or read.
@@ -72,8 +74,31 @@ impl Repo {
             objects += 1;
         }
 
-        git_in(&staging, &["init", "-q"])?;
+        let git = self.git()?;
+        let reference = format!("{STORE_PREFIX}{machine}");
+
+        git_in(&staging, &["init", "-q", "-b", "main"])?;
+
+        // Chain the export onto the previous one, so publishing stays a fast-forward.
+        let previous = git.ref_exists(&reference)?;
+        if previous {
+            git_in(
+                &staging,
+                &[
+                    "fetch",
+                    "-q",
+                    &self.root().to_string_lossy(),
+                    &format!("+{reference}:refs/kap/parent"),
+                ],
+            )?;
+            let parent = git_in(&staging, &["rev-parse", "refs/kap/parent"])?
+                .trim()
+                .to_string();
+            git_in(&staging, &["update-ref", "refs/heads/main", &parent])?;
+        }
+
         git_in(&staging, &["add", "-A"])?;
+        let message = format!("KAP export from {machine}");
         git_in(
             &staging,
             &[
@@ -84,19 +109,18 @@ impl Repo {
                 "commit",
                 "-q",
                 "-m",
-                &format!("KAP export from {machine}"),
+                &message,
             ],
         )?;
-        let commit = git_in(&staging, &["rev-parse", "HEAD"])?.trim().to_string();
 
-        let git = self.git()?;
-        let reference = format!("{STORE_PREFIX}{machine}");
+        let commit = git_in(&staging, &["rev-parse", "HEAD"])?.trim().to_string();
         git.fetch(&staging.to_string_lossy(), &format!("{commit}:{reference}"))?;
         git.push(remote, &format!("{reference}:{reference}"))?;
 
         let _ = fs::remove_dir_all(&staging);
         Ok(SyncReport {
             rows,
+            updated: 0,
             objects,
             refs: 1,
         })
@@ -117,7 +141,9 @@ impl Repo {
         let mut report = SyncReport::default();
         for reference in git.refs_under(REMOTE_PREFIX)? {
             if let Ok(rows) = git.show_text(&format!("{reference}:rows.jsonl")) {
-                report.rows += self.db()?.import_jsonl(&rows)?.rows;
+                let stats = self.db()?.import_jsonl(&rows)?;
+                report.rows += stats.rows;
+                report.updated += stats.updated;
             }
 
             for path in git.ls_tree(&reference)? {

@@ -885,3 +885,49 @@ fn history_travels_to_another_clone() {
     assert_eq!(again.rows, 0);
     assert_eq!(again.objects, 0);
 }
+
+#[test]
+fn closing_an_attempt_propagates_to_other_machines() {
+    let (_dir_a, repo_a) = repository_with_commit();
+    let attempt = repo_a
+        .start_attempt(NewAttempt {
+            label: "shared",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let remote = tempfile::tempdir().expect("remote dir");
+    let remote_path = remote.path().join("origin.git");
+    git(
+        remote.path(),
+        &["init", "--bare", "-q", remote_path.to_str().unwrap()],
+    );
+    let remote_url = remote_path.to_str().unwrap().to_string();
+    git(repo_a.root(), &["remote", "add", "origin", &remote_url]);
+    git(repo_a.root(), &["push", "-q", "origin", "main"]);
+    repo_a.push("origin").expect("first push");
+
+    let clone_parent = tempfile::tempdir().expect("clone parent");
+    let clone_path = clone_parent.path().join("b");
+    git(
+        clone_parent.path(),
+        &["clone", "-q", &remote_url, clone_path.to_str().unwrap()],
+    );
+    let repo_b = Repo::init(&clone_path).expect("init in the clone");
+    repo_b.pull("origin").expect("first pull");
+    assert_eq!(
+        repo_b.attempt(&attempt.id).expect("attempt on b").state,
+        AttemptState::Open
+    );
+
+    repo_a.close_attempt(&attempt.id).expect("close on a");
+    repo_a.push("origin").expect("second push");
+
+    let report = repo_b.pull("origin").expect("second pull");
+    assert_eq!(report.updated, 1);
+    assert_eq!(
+        repo_b.attempt(&attempt.id).expect("attempt on b").state,
+        AttemptState::Closed
+    );
+}

@@ -101,6 +101,11 @@ its table) plus the objects its rows reference. Pull fetches every machine ref a
 id with `INSERT OR IGNORE`, so importing is idempotent and two machines never contend for a ref.
 The SQLite file itself is never synced — merging two databases is not something files can do.
 
+Exports chain: each push commits on top of the previous export commit, so publishing is a
+fast-forward and `kap push` never needs a force. Most rows are append-only, so an import only
+inserts. The exceptions are an attempt's lifecycle and a run's status, which move forward
+monotonically: an import closes an attempt that is open here, and never reopens one that is closed.
+
 ## 5. Evidence
 
 **Principle: evidence ≠ agent claims.**

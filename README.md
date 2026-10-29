@@ -196,6 +196,9 @@ take, and no force-push. `kap pull` is idempotent: pulling twice imports nothing
 What travels is the history and the objects it references — never the SQLite file, which could not
 be merged between two machines.
 
+Most of the history is append-only, but closing an attempt is an update. Lifecycle moves forward
+monotonically across machines: a closed attempt stays closed, and a stale export cannot reopen one.
+
 
 ## Repository layout
 

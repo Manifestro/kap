@@ -98,7 +98,10 @@ const TABLES: &[(&str, &[&str])] = &[
 /// What an import brought in.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ImportStats {
+    /// Rows that did not exist here yet.
     pub rows: usize,
+    /// Existing rows whose lifecycle moved forward.
+    pub updated: usize,
 }
 
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
@@ -662,10 +665,61 @@ impl Db {
                 .conn
                 .execute(&sql, params.as_slice())
                 .map_err(|e| Error::db(&self.path, e))?;
-            stats.rows += inserted;
+
+            if inserted > 0 {
+                stats.rows += 1;
+            } else {
+                stats.updated += self.advance_lifecycle(table, &row)?;
+            }
         }
 
         Ok(stats)
+    }
+
+    /// Apply a lifecycle change that arrived for a row we already have.
+    ///
+    /// Most tables are append-only and an existing row is final. Attempts and runs are the
+    /// exception: closing an attempt or finishing a run is an update, so a machine that already
+    /// holds the row still has to learn about it. The merge is monotonic — a closed attempt is
+    /// never reopened by an older export — and it only moves forward.
+    fn advance_lifecycle(&self, table: &str, row: &serde_json::Value) -> Result<usize> {
+        let updated = match table {
+            "attempts" => {
+                let closed_at = &row["closed_at"];
+                if closed_at.is_null() {
+                    0
+                } else {
+                    self.conn
+                        .execute(
+                            "UPDATE attempts SET state = 'closed', closed_at = ?2 \
+                             WHERE id = ?1 AND closed_at IS NULL",
+                            rusqlite::params![row["id"].as_str(), closed_at.as_str(),],
+                        )
+                        .map_err(|e| Error::db(&self.path, e))?
+                }
+            }
+            "runs" => {
+                let finished_at = &row["finished_at"];
+                if finished_at.is_null() {
+                    0
+                } else {
+                    self.conn
+                        .execute(
+                            "UPDATE runs SET status = ?2, finished_at = ?3 \
+                             WHERE id = ?1 AND finished_at IS NULL",
+                            rusqlite::params![
+                                row["id"].as_str(),
+                                row["status"].as_str(),
+                                finished_at.as_str(),
+                            ],
+                        )
+                        .map_err(|e| Error::db(&self.path, e))?
+                }
+            }
+            _ => 0,
+        };
+
+        Ok(updated)
     }
 
     /// Object addresses referenced anywhere in the history.
