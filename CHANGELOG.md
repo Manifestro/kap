@@ -7,27 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-29
+
 ### Added
 
 - `kap install` adds the Claude Code hooks to `~/.claude/settings.json` once per machine, instead of
   a per-worktree `kap hook setup`. It preserves existing settings and other hooks, and
   `kap uninstall` removes only what it added.
+- `kap install --settings <path>` writes the hooks into any Claude-compatible settings file, so
+  another CLI that fires the same events can be attached without KAP knowing anything about it.
 - Recording can be switched off without uninstalling: `KAP_DISABLED=1` for one session, `kap
   disable` and `kap enable` for a repository.
-
-### Added
-
-- `kap doctor` checks that recording is actually wired: the hooks exist in a settings file, the
+- `kap doctor` checks that recording is actually wired — the hooks exist in a settings file, the
   binary they call still exists, recording is not disabled, and the current directory is one where
   hooks record. It exits non-zero when something is missing.
 - `kap status` says whether the hooks are installed and whether recording is disabled here.
 
 ### Changed
 
-- A run no longer records which harness produced it. KAP talks to hooks, not to Claude Code: any
-  CLI that fires the same events is equally supported. Migration 0009 drops the column.
-- `kap install --settings <path>` writes the hooks into any Claude-compatible settings file, so
-  another hook-compatible CLI can be attached without KAP knowing anything about it.
+- A run no longer records which harness produced it. KAP talks to hooks, not to Claude Code, so
+  any CLI that emits the same events is equally supported. Migration 0009 drops the column.
 
 ### Fixed
 
@@ -101,6 +100,7 @@ shared with another machine.
 - Append-only SQLite schema with versioned migrations, and a CI job that runs formatting, lints, and
   tests on every push and pull request.
 
-[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Manifestro/kap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Manifestro/kap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Manifestro/kap/releases/tag/v0.1.0
