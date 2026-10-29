@@ -435,10 +435,14 @@ fn run() -> Result<ExitCode, String> {
         Command::Push { remote } => {
             let repo = open_repo()?;
             let report = repo.push(&remote).map_err(show)?;
-            println!(
-                "Pushed {} rows and {} objects to {remote}",
-                report.rows, report.objects
-            );
+            if report.rows == 0 && report.objects == 0 {
+                println!("Nothing new to push to {remote}.");
+            } else {
+                println!(
+                    "Pushed {} rows and {} objects to {remote}",
+                    report.rows, report.objects
+                );
+            }
             Ok(ExitCode::SUCCESS)
         }
 

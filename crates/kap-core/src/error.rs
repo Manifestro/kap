@@ -67,6 +67,9 @@ pub enum Error {
     #[error("no command given")]
     EmptyCommand,
 
+    #[error("another push is already running in `{path}`; try again in a moment")]
+    SyncBusy { path: PathBuf },
+
     #[error("could not read a sync row: {reason}")]
     SyncRow { reason: String },
 

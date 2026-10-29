@@ -216,6 +216,22 @@ Most of the history is append-only, but closing an attempt is an update. Lifecyc
 monotonically across machines: a closed attempt stays closed, and a stale export cannot reopen one.
 
 
+## Limits
+
+These are known and deliberate for now, not oversights:
+
+- **A crash loses the command in flight.** An event is written after its command finishes, so
+  killing `kap` mid-command loses that event — and the command itself keeps running as an orphan.
+- **`.kap/` is the only copy of the history.** SQLite is crash-consistent, but there is no repair
+  tool and no automatic backup: a corrupted `kap.db` loses decisions, evidence, and events. Branches
+  and objects survive; `kap push` is the backup that exists.
+- **Recorded output is stored verbatim.** If a command prints a secret, KAP stores it in `.kap/` and
+  sends it to the remote on `kap push`. There is no redaction.
+- **Hooks see tool calls, not reasoning.** Claude Code hooks capture tool calls and their output; they
+  do not capture prompts, thinking, or model messages. A tool's arguments are recorded for shell
+  commands and file edits only.
+- **Codex is not supported yet.**
+
 ## Repository layout
 
 ```text

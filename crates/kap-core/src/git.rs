@@ -94,7 +94,7 @@ impl Git {
         if !output.status.success() {
             return Err(Error::Git {
                 command: args.join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                stderr: failure_text(&output),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -155,7 +155,7 @@ impl Git {
         if !output.status.success() {
             return Err(Error::Git {
                 command: args.join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                stderr: failure_text(&output),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -223,7 +223,7 @@ impl Git {
         if !output.status.success() {
             return Err(Error::Git {
                 command: format!("show {spec}"),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                stderr: failure_text(&output),
             });
         }
         Ok(output.stdout)
@@ -263,7 +263,7 @@ impl Git {
         if !output.status.success() {
             return Err(Error::Git {
                 command: args.join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                stderr: failure_text(&output),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -275,5 +275,16 @@ impl Git {
             .current_dir(&self.root)
             .output()
             .map_err(Error::GitMissing)
+    }
+}
+
+/// Git explains some failures on stdout rather than stderr — `commit` with nothing to commit, for
+/// example. Report whichever stream actually carries the reason.
+fn failure_text(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        stderr
     }
 }

@@ -35,7 +35,12 @@ impl ObjectStore {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
             }
-            fs::write(&path, bytes).map_err(|e| Error::io(&path, e))?;
+
+            // Write beside the target and rename, so a concurrent reader never sees a half-written
+            // object and two writers of the same bytes cannot interleave.
+            let staging = path.with_extension(format!("tmp-{}", std::process::id()));
+            fs::write(&staging, bytes).map_err(|e| Error::io(&staging, e))?;
+            fs::rename(&staging, &path).map_err(|e| Error::io(&path, e))?;
         }
 
         Ok(format!("blake3:{hex}"))

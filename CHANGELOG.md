@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `kap push` with nothing new to export failed with a bare git error; it now reports that there is
+  nothing to push.
+- Git failures that git explains on stdout — an empty commit, for example — were reported with an
+  empty reason.
+- Objects were written in place, so a concurrent pull could read a half-written object. They are now
+  written beside the target and renamed into place.
+- Two pushes from the same machine raced for the same ref and one failed. Pushes are now serialised
+  with a lock file, and a lock left by a crashed push is ignored after five minutes.
+
 ## [0.1.0] - 2026-10-29
 
 The first working version: an attempt can be opened, recorded, reviewed, merged, snapshotted, and
