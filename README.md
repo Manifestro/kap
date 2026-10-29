@@ -85,8 +85,9 @@ gives an attempt its own branch and worktree while recording it.
 - [x] Cargo workspace, core crate, and CLI skeleton
 - [x] SQLite schema for attempts, runs, tool events, decisions, and evidence
 - [x] Worktree-based isolation, `kap init`, `kap attempt start`, `kap attempt list`
-- [ ] Tool-event capture and evidence recording
-- [ ] Decisions: recording rationale and rejected alternatives
+- [x] Tool-event capture: `kap exec` records commands, exit codes, and both output streams
+- [x] Decisions: `kap decision add` records rationale and rejected alternatives
+- [ ] Evidence attached to decisions, with its completeness marked
 - [ ] Snapshots, diff between attempts, and restore
 - [ ] Adapter interface and a first adapter (Claude Code or Codex)
 - [ ] Review-gated merge
@@ -112,7 +113,21 @@ kap attempt start fix-parser \
 ```
 
 `kap attempt start` creates a branch `kap/attempt-…` and a worktree under `.kap/worktrees/`, then
-prints where to work. `kap attempt list` shows the attempts recorded so far.
+prints where to work. From inside that worktree, the attempt is detected automatically:
+
+```sh
+cd .kap/worktrees/attempt-…
+kap exec -- cargo test                    # recorded: command, exit code, stdout, stderr
+kap decision add \
+  --summary "Normalize trailing commas in the lexer" \
+  --rationale "the parser then needs no special case" \
+  --alternatives "handle them in the parser"
+kap log                                   # the timeline of both
+```
+
+Command output is stored by BLAKE3 hash in `.kap/objects/`, so identical output is kept once and a
+hash proves two records saw the same bytes. A failed command is recorded too — it is evidence.
+
 
 ## Repository layout
 

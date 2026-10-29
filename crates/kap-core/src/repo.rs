@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::git::Git;
+use crate::objects::ObjectStore;
 
 /// Name of the directory KAP keeps its state in.
 pub const KAP_DIR: &str = ".kap";
@@ -25,7 +26,7 @@ impl Repo {
     pub fn init(path: &Path) -> Result<Repo> {
         let git = Git::discover(path)?;
         let repo = Repo {
-            root: git.root().to_path_buf(),
+            root: git.main_root()?,
         };
         let kap = repo.kap_dir();
 
@@ -46,7 +47,7 @@ impl Repo {
     pub fn open(path: &Path) -> Result<Repo> {
         let git = Git::discover(path)?;
         let repo = Repo {
-            root: git.root().to_path_buf(),
+            root: git.main_root()?,
         };
 
         if !repo.db_path().exists() {
@@ -70,6 +71,11 @@ impl Repo {
     /// The history database file.
     pub fn db_path(&self) -> PathBuf {
         self.kap_dir().join(DB_FILE)
+    }
+
+    /// Content-addressed storage for command output and other payloads.
+    pub fn objects(&self) -> ObjectStore {
+        ObjectStore::new(self.kap_dir().join("objects"))
     }
 
     /// Open the history database.

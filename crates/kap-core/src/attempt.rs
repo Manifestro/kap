@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
-use crate::model::{now_rfc3339, Attempt, AttemptState};
+use crate::model::{new_id, now_rfc3339, Attempt, AttemptState};
 use crate::repo::Repo;
 
 /// Parameters for [`Repo::start_attempt`].
@@ -27,10 +27,7 @@ impl Repo {
             None => git.head_commit()?,
         };
 
-        let id = format!(
-            "attempt-{}",
-            ulid::Ulid::generate().to_string().to_lowercase()
-        );
+        let id = format!("attempt-{}", new_id());
         let branch = format!("kap/{id}");
         let worktree: PathBuf = self.kap_dir().join("worktrees").join(&id);
 

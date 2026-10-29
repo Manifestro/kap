@@ -34,9 +34,32 @@ impl Git {
         })
     }
 
-    /// The repository root.
+    /// The repository root of the checkout this handle was discovered from.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The main repository root.
+    ///
+    /// For a linked worktree, `git rev-parse --show-toplevel` returns the worktree itself, but
+    /// KAP's store lives in the main repository. The common git directory is the same for both,
+    /// so its parent is the answer.
+    pub fn main_root(&self) -> Result<PathBuf> {
+        let common = PathBuf::from(self.run(&["rev-parse", "--git-common-dir"])?.trim());
+        let common = if common.is_absolute() {
+            common
+        } else {
+            self.root.join(common)
+        };
+
+        match common.file_name().and_then(|name| name.to_str()) {
+            Some(".git") => Ok(common
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.root.clone())),
+            // A bare repository has no working tree of its own.
+            _ => Ok(self.root.clone()),
+        }
     }
 
     /// The commit `HEAD` points at.

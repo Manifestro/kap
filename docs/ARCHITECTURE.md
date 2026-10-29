@@ -201,12 +201,14 @@ An adapter must never be required for reading history.
 ## 9. CLI surface *(draft)*
 
 ```text
-kap init                     # create .kap/ in a repository
-kap attempt start            # open a new attempt (worktree + branch)
+kap init                     # create .kap/ in a repository                        [done]
+kap attempt start            # open a new attempt (worktree + branch)              [done]
 kap attempt close            # close an attempt and freeze its history
-kap attempt list             # list attempts and their state
-kap log                      # timeline of events, decisions, evidence
-kap decision add             # record a decision with rationale and alternatives
+kap attempt list             # list attempts and their state                      [done]
+kap exec -- <command>        # run a command inside an attempt and record it      [done]
+kap log                      # timeline of commands and decisions                 [done]
+kap decision add             # record a decision with rationale and alternatives  [done]
+kap decision list            # decisions recorded for an attempt                  [done]
 kap evidence attach          # attach an artifact as evidence
 kap snapshot                 # snapshot the current state of an attempt
 kap diff <a> <b>             # compare two attempts

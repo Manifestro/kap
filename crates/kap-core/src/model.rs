@@ -58,3 +58,34 @@ pub fn now_rfc3339() -> String {
         .format(&time::format_description::well_known::Rfc3339)
         .expect("the current time is always formattable as RFC 3339")
 }
+
+/// One observable action inside an attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolEvent {
+    pub id: String,
+    pub attempt_id: String,
+    pub kind: String,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+    pub stdout_hash: Option<String>,
+    pub stderr_hash: Option<String>,
+    pub observed: bool,
+    pub occurred_at: String,
+}
+
+/// A choice an agent committed to, with the reasoning behind it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    pub id: String,
+    pub attempt_id: String,
+    pub summary: String,
+    pub rationale: Option<String>,
+    pub alternatives: Option<String>,
+    pub source: String,
+    pub created_at: String,
+}
+
+/// A time-ordered, lowercase identifier, e.g. `01m63tv077jys74f9v4g7q93nm`.
+pub(crate) fn new_id() -> String {
+    ulid::Ulid::generate().to_string().to_lowercase()
+}

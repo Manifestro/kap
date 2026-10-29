@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 use kap_core::attempt::NewAttempt;
+use kap_core::decision::NewDecision;
 use kap_core::model::AttemptState;
 use kap_core::repo::Repo;
 use kap_core::Error;
@@ -143,4 +144,138 @@ fn open_finds_the_store_from_a_subdirectory() {
         .canonicalize()
         .expect("canonicalize the repository root");
     assert_eq!(repo.root(), expected.as_path());
+}
+
+#[test]
+fn exec_records_an_event_and_stores_its_output() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "run",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let output = repo
+        .exec(
+            &attempt.id,
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo hello; echo oops >&2; exit 3".to_string(),
+            ],
+        )
+        .expect("exec");
+
+    assert_eq!(output.exit_code, 3);
+    assert_eq!(output.stdout, b"hello\n");
+    assert_eq!(output.stderr, b"oops\n");
+
+    let events = repo.tool_events(Some(&attempt.id)).expect("list events");
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(event.exit_code, Some(3));
+    assert!(event.observed);
+
+    let stdout = repo
+        .objects()
+        .get(event.stdout_hash.as_deref().unwrap())
+        .expect("read stdout object");
+    assert_eq!(stdout, b"hello\n");
+
+    let stderr = repo
+        .objects()
+        .get(event.stderr_hash.as_deref().unwrap())
+        .expect("read stderr object");
+    assert_eq!(stderr, b"oops\n");
+}
+
+#[test]
+fn identical_output_is_stored_once() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "twice",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let command = ["echo".to_string(), "same".to_string()];
+    repo.exec(&attempt.id, &command).expect("first exec");
+    repo.exec(&attempt.id, &command).expect("second exec");
+
+    let events = repo.tool_events(Some(&attempt.id)).expect("list events");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].stdout_hash, events[1].stdout_hash);
+
+    let address = events[0].stdout_hash.as_deref().unwrap();
+    assert!(repo.objects().path(address).unwrap().is_file());
+}
+
+#[test]
+fn decisions_are_recorded_with_rationale() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "decide",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let decision = repo
+        .add_decision(
+            &attempt.id,
+            NewDecision {
+                summary: "Use a worktree per attempt",
+                rationale: Some("changes must not leak between attempts"),
+                alternatives: Some("reuse one checkout and stash between runs"),
+            },
+        )
+        .expect("add decision");
+
+    assert_eq!(decision.source, "agent_report");
+    assert!(decision.id.starts_with("decision-"));
+
+    let decisions = repo.decisions(&attempt.id).expect("list decisions");
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(
+        decisions[0].alternatives.as_deref(),
+        Some("reuse one checkout and stash between runs")
+    );
+}
+
+#[test]
+fn decisions_need_an_existing_attempt() {
+    let (_dir, repo) = repository_with_commit();
+
+    match repo.add_decision(
+        "attempt-missing",
+        NewDecision {
+            summary: "x",
+            rationale: None,
+            alternatives: None,
+        },
+    ) {
+        Err(Error::AttemptNotFound { .. }) => {}
+        other => panic!("expected AttemptNotFound, got {other:?}"),
+    }
+}
+
+#[test]
+fn open_inside_a_worktree_finds_the_main_store() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "nested",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let inside = Repo::open(&attempt.worktree).expect("open from the attempt worktree");
+    assert_eq!(inside.root(), repo.root());
+    assert_eq!(inside.attempts().expect("list attempts").len(), 1);
 }

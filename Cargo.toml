@@ -16,5 +16,6 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 ulid = "3"
+blake3 = "1"
 
 tempfile = "3"

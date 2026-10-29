@@ -39,6 +39,15 @@ pub enum Error {
 
     #[error("worktree `{path}` already exists")]
     WorktreeExists { path: PathBuf },
+
+    #[error("attempt `{id}` is closed; its history is frozen")]
+    AttemptClosed { id: String },
+
+    #[error("no command given")]
+    EmptyCommand,
+
+    #[error("`{address}` is not an object address (expected `blake3:<hex>`)")]
+    InvalidObjectAddress { address: String },
 }
 
 impl Error {

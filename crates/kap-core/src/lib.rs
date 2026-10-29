@@ -6,9 +6,12 @@
 
 pub mod attempt;
 pub mod db;
+pub mod decision;
 pub mod error;
+pub mod events;
 pub mod git;
 pub mod model;
+pub mod objects;
 pub mod repo;
 
 pub use error::{Error, Result};
