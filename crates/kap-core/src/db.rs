@@ -5,6 +5,102 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use crate::error::{Error, Result};
 use crate::model::{Attempt, AttemptState, Decision, Evidence, Review, Run, Snapshot, ToolEvent};
 
+/// Every table and its columns, in an order safe for import: referenced rows come first.
+const TABLES: &[(&str, &[&str])] = &[
+    (
+        "attempts",
+        &[
+            "id",
+            "label",
+            "task",
+            "state",
+            "branch",
+            "worktree",
+            "base_commit",
+            "created_at",
+            "closed_at",
+        ],
+    ),
+    (
+        "runs",
+        &[
+            "id",
+            "attempt_id",
+            "agent",
+            "session_id",
+            "status",
+            "started_at",
+            "finished_at",
+        ],
+    ),
+    (
+        "tool_events",
+        &[
+            "id",
+            "attempt_id",
+            "run_id",
+            "kind",
+            "command",
+            "exit_code",
+            "output_hash",
+            "stderr_hash",
+            "observed",
+            "occurred_at",
+        ],
+    ),
+    (
+        "decisions",
+        &[
+            "id",
+            "attempt_id",
+            "summary",
+            "rationale",
+            "alternatives",
+            "source",
+            "created_at",
+        ],
+    ),
+    (
+        "evidence",
+        &[
+            "id",
+            "attempt_id",
+            "decision_id",
+            "source",
+            "command",
+            "exit_code",
+            "artifact_hash",
+            "path",
+            "observed",
+            "complete",
+            "recorded_at",
+        ],
+    ),
+    (
+        "snapshots",
+        &["id", "attempt_id", "commit_id", "note", "created_at"],
+    ),
+    (
+        "reviews",
+        &[
+            "id",
+            "attempt_id",
+            "verdict",
+            "reviewer",
+            "head_commit",
+            "note",
+            "created_at",
+        ],
+    ),
+    ("meta", &["key", "value"]),
+];
+
+/// What an import brought in.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ImportStats {
+    pub rows: usize,
+}
+
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
@@ -13,6 +109,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_evidence_paths.sql"),
     include_str!("../migrations/0005_reviews.sql"),
     include_str!("../migrations/0006_snapshots.sql"),
+    include_str!("../migrations/0007_meta.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -462,6 +559,136 @@ impl Db {
             .ok_or_else(|| Error::SnapshotNotFound { id: id.to_string() })
     }
 
+    /// Read a value from the meta table.
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|e| Error::db(&self.path, e))
+    }
+
+    /// Write a value into the meta table.
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, value],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// Every row as one JSON object per line, tagged with its table.
+    pub fn export_jsonl(&self) -> Result<String> {
+        let mut out = String::new();
+
+        for (table, columns) in TABLES {
+            let pairs = columns
+                .iter()
+                .map(|column| format!("'{column}', {column}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!("SELECT json_object('table', '{table}', {pairs}) FROM {table}");
+
+            let mut statement = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| Error::db(&self.path, e))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| Error::db(&self.path, e))?;
+
+            for row in rows {
+                out.push_str(&row.map_err(|e| Error::db(&self.path, e))?);
+                out.push('\n');
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Import rows from [`Db::export_jsonl`] output, skipping rows that already exist.
+    ///
+    /// Rows are keyed by their ids, which are globally unique, so importing is idempotent and two
+    /// machines can exchange history in either order.
+    pub fn import_jsonl(&self, jsonl: &str) -> Result<ImportStats> {
+        let mut stats = ImportStats::default();
+
+        for line in jsonl.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let row: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| Error::HookPayload { source })?;
+            let table = row
+                .get("table")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| Error::SyncRow {
+                    reason: "row has no table".to_string(),
+                })?;
+
+            let columns = TABLES
+                .iter()
+                .find(|(name, _)| *name == table)
+                .map(|(_, columns)| *columns)
+                .ok_or_else(|| Error::SyncRow {
+                    reason: format!("unknown table `{table}`"),
+                })?;
+
+            let placeholders = (1..=columns.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "INSERT OR IGNORE INTO {table} ({}) VALUES ({placeholders})",
+                columns.join(", ")
+            );
+
+            let values: Vec<Box<dyn rusqlite::ToSql>> = columns
+                .iter()
+                .map(|column| boxed_value(&row[*column]))
+                .collect();
+            let params: Vec<&dyn rusqlite::ToSql> = values
+                .iter()
+                .map(|value| value.as_ref() as &dyn rusqlite::ToSql)
+                .collect();
+
+            let inserted = self
+                .conn
+                .execute(&sql, params.as_slice())
+                .map_err(|e| Error::db(&self.path, e))?;
+            stats.rows += inserted;
+        }
+
+        Ok(stats)
+    }
+
+    /// Object addresses referenced anywhere in the history.
+    pub fn object_addresses(&self) -> Result<Vec<String>> {
+        let mut addresses = Vec::new();
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT output_hash FROM tool_events WHERE output_hash IS NOT NULL \
+                 UNION SELECT stderr_hash FROM tool_events WHERE stderr_hash IS NOT NULL \
+                 UNION SELECT artifact_hash FROM evidence WHERE artifact_hash IS NOT NULL",
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db(&self.path, e))?;
+        for row in rows {
+            addresses.push(row.map_err(|e| Error::db(&self.path, e))?);
+        }
+        Ok(addresses)
+    }
+
     fn migrate(&self) -> Result<()> {
         let version: i64 = self
             .conn
@@ -507,4 +734,15 @@ fn attempt_from_row(row: &Row<'_>) -> rusqlite::Result<Attempt> {
         created_at: row.get("created_at")?,
         closed_at: row.get("closed_at")?,
     })
+}
+
+fn boxed_value(value: &serde_json::Value) -> Box<dyn rusqlite::ToSql> {
+    match value {
+        serde_json::Value::String(text) => Box::new(text.clone()),
+        serde_json::Value::Number(number) => match number.as_i64() {
+            Some(number) => Box::new(number),
+            None => Box::new(number.as_f64()),
+        },
+        _ => Box::new(Option::<String>::None),
+    }
 }

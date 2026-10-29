@@ -93,7 +93,7 @@ recorded, the state can be snapshotted and restored, and the result is merged on
 - [x] Claude Code adapter through hooks: session briefing, tool events, and a stop-time snapshot
 - [x] Review-gated merge: `kap review` records a verdict, `kap merge` obeys it
 - [ ] Codex adapter and a documented adapter interface for other agents
-- [ ] `kap push` / `kap pull` over a separate git ref namespace
+- [x] `kap push` / `kap pull` over per-machine git refs, with idempotent import
 
 ## Getting started
 
@@ -183,6 +183,18 @@ kap snapshot list
 kap snapshot restore snapshot-…            # a new attempt, original untouched
 kap attempt close && kap attempt clean     # drop the worktree, keep the branch
 ```
+
+History travels through the git remote you already have:
+
+```sh
+kap push                                  # publishes under refs/kap/store/<machine-id>
+kap pull                                  # imports every machine ref it finds
+```
+
+Each machine pushes to its own ref and imports rows by id, so there is no server to run, no lock to
+take, and no force-push. `kap pull` is idempotent: pulling twice imports nothing the second time.
+What travels is the history and the objects it references — never the SQLite file, which could not
+be merged between two machines.
 
 
 ## Repository layout

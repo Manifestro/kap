@@ -67,6 +67,9 @@ pub enum Error {
     #[error("no command given")]
     EmptyCommand,
 
+    #[error("could not read a sync row: {reason}")]
+    SyncRow { reason: String },
+
     #[error("could not parse hook input")]
     HookPayload {
         #[source]

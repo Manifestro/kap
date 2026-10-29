@@ -167,6 +167,62 @@ impl Git {
         Ok(())
     }
 
+    /// Remote refs matching a pattern, one `sha\tref` line each.
+    pub fn ls_remote(&self, remote: &str, pattern: &str) -> Result<String> {
+        self.run(&["ls-remote", "--refs", remote, pattern])
+    }
+
+    /// Fetch a refspec from a remote.
+    pub fn fetch(&self, remote: &str, refspec: &str) -> Result<()> {
+        self.run(&["fetch", "--no-tags", remote, refspec])?;
+        Ok(())
+    }
+
+    /// Push a refspec to a remote.
+    pub fn push(&self, remote: &str, refspec: &str) -> Result<()> {
+        self.run(&["push", remote, refspec])?;
+        Ok(())
+    }
+
+    /// Ref names under a prefix.
+    pub fn refs_under(&self, prefix: &str) -> Result<Vec<String>> {
+        let out = self.run(&["for-each-ref", "--format=%(refname)", prefix])?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Paths in a revision's tree.
+    pub fn ls_tree(&self, rev: &str) -> Result<Vec<String>> {
+        let out = self.run(&["ls-tree", "-r", "--name-only", rev])?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// A file in a revision, as text.
+    pub fn show_text(&self, spec: &str) -> Result<String> {
+        self.run(&["show", spec])
+    }
+
+    /// A file in a revision, as bytes.
+    pub fn show_bytes(&self, spec: &str) -> Result<Vec<u8>> {
+        let output = self.output(&["show", spec])?;
+        if !output.status.success() {
+            return Err(Error::Git {
+                command: format!("show {spec}"),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        Ok(output.stdout)
+    }
+
     /// Changed paths in a working tree, including untracked files.
     pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
         self.run_in(dir, &["status", "--porcelain"])

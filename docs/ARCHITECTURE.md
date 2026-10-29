@@ -95,6 +95,12 @@ Principles:
 - **Offline first.** Everything must work with no network at all; sync is never a precondition for
   recording or reading history.
 
+The implementation follows that shape: every machine keeps a stable id in `.kap/` and pushes a
+commit to `refs/kap/store/<machine-id>` holding `rows.jsonl` (one JSON object per row, tagged with
+its table) plus the objects its rows reference. Pull fetches every machine ref and imports rows by
+id with `INSERT OR IGNORE`, so importing is idempotent and two machines never contend for a ref.
+The SQLite file itself is never synced — merging two databases is not something files can do.
+
 ## 5. Evidence
 
 **Principle: evidence ≠ agent claims.**

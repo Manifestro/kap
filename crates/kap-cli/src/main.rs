@@ -66,6 +66,18 @@ enum Command {
         #[command(subcommand)]
         command: EvidenceCommand,
     },
+    /// Share this repository's history through a git remote
+    Push {
+        /// Git remote to push to
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Bring in history pushed from another machine
+    Pull {
+        /// Git remote to pull from
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
     /// Capture and restore the state of an attempt
     Snapshot {
         #[command(subcommand)]
@@ -408,6 +420,30 @@ fn run() -> Result<ExitCode, String> {
                     Ok(ExitCode::SUCCESS)
                 }
             }
+        }
+
+        Command::Push { remote } => {
+            let repo = open_repo()?;
+            let report = repo.push(&remote).map_err(show)?;
+            println!(
+                "Pushed {} rows and {} objects to {remote}",
+                report.rows, report.objects
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Pull { remote } => {
+            let repo = open_repo()?;
+            let report = repo.pull(&remote).map_err(show)?;
+            if report.refs == 0 {
+                println!("Nothing to pull from {remote}.");
+            } else {
+                println!(
+                    "Pulled {} new rows and {} objects from {} machine ref(s) on {remote}",
+                    report.rows, report.objects, report.refs
+                );
+            }
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Snapshot { command } => {

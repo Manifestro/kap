@@ -18,5 +18,6 @@ pub mod objects;
 pub mod repo;
 pub mod review;
 pub mod snapshot;
+pub mod sync;
 
 pub use error::{Error, Result};

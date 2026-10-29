@@ -816,3 +816,72 @@ fn cleaning_removes_a_closed_attempt_but_keeps_its_branch() {
         .branch_exists(&attempt.branch)
         .expect("branch lookup"));
 }
+
+#[test]
+fn history_travels_to_another_clone() {
+    let (_dir_a, repo_a) = repository_with_commit();
+    let attempt = repo_a
+        .start_attempt(NewAttempt {
+            label: "shared",
+            task: Some("share me"),
+            base: None,
+        })
+        .expect("start attempt");
+    repo_a
+        .exec(&attempt.id, &["echo".to_string(), "hello".to_string()])
+        .expect("exec");
+    repo_a
+        .add_decision(
+            &attempt.id,
+            NewDecision {
+                summary: "say hello",
+                rationale: None,
+                alternatives: None,
+            },
+        )
+        .expect("add decision");
+
+    let remote = tempfile::tempdir().expect("remote dir");
+    let remote_path = remote.path().join("origin.git");
+    git(
+        remote.path(),
+        &["init", "--bare", "-q", remote_path.to_str().unwrap()],
+    );
+
+    let remote_url = remote_path.to_str().unwrap().to_string();
+    git(repo_a.root(), &["remote", "add", "origin", &remote_url]);
+    git(repo_a.root(), &["push", "-q", "origin", "main"]);
+
+    let pushed = repo_a.push("origin").expect("push");
+    assert_eq!(pushed.refs, 1);
+    assert!(pushed.rows >= 4, "pushed {} rows", pushed.rows);
+    assert!(pushed.objects >= 1);
+
+    let clone_parent = tempfile::tempdir().expect("clone parent");
+    let clone_path = clone_parent.path().join("b");
+    git(
+        clone_parent.path(),
+        &["clone", "-q", &remote_url, clone_path.to_str().unwrap()],
+    );
+
+    let repo_b = Repo::init(&clone_path).expect("init in the clone");
+    let pulled = repo_b.pull("origin").expect("pull");
+    assert_eq!(pulled.refs, 1);
+    assert!(pulled.rows >= 4);
+
+    assert_eq!(repo_b.attempts().expect("attempts").len(), 1);
+    assert_eq!(repo_b.decisions(&attempt.id).expect("decisions").len(), 1);
+
+    let events = repo_b.tool_events(Some(&attempt.id)).expect("events");
+    assert_eq!(events.len(), 1);
+    let stored = repo_b
+        .objects()
+        .get(events[0].stdout_hash.as_deref().expect("stdout hash"))
+        .expect("read object");
+    assert_eq!(stored, b"hello\n");
+
+    // Pulling again changes nothing: importing is idempotent.
+    let again = repo_b.pull("origin").expect("second pull");
+    assert_eq!(again.rows, 0);
+    assert_eq!(again.objects, 0);
+}
