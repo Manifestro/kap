@@ -38,20 +38,39 @@ already versions.
 | Multi-agent model | Branches that merge (and conflict) | Isolated workspaces with explicit coordination |
 | Reproducibility | A commit hash | A decision trail plus the state and evidence behind it |
 
+## How it works
+
+KAP is a versioning layer, not an agent runtime. It does not host a model, does not drive an agent's
+loop, and does not require a particular harness. Claude Code, Codex, DeepSeek, and anything else
+connect through adapters — and the recorded history stays useful with none of them running.
+
+```text
+Claude Code ──┐
+Codex ────────┼── Adapters ── KAP Core ── .kap/
+DeepSeek ─────┘                  │
+                                 └── CLI
+```
+
+KAP is responsible for **isolation** (each agent gets its own branch and worktree), **history**
+(commands, file changes, and their results), **decisions** (rationale and rejected alternatives),
+**snapshots** (restorable states), **collaboration** (results exchanged without conflicts), and
+**merge** (deliberate combination of results).
+
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) has the full design.
+
 ## Core concepts
 
 These are provisional definitions — the vocabulary will settle as the design does.
 
-- **Workspace** — an isolated environment where a single agent works. Changes made in one
-  workspace do not leak into another.
-- **Agent** — anything that can act inside a workspace: an external coding agent such as Claude
-  Code or Codex, or a custom agent built on the platform's interfaces.
-- **Action** — a single observable step an agent takes: a command, an edit, a test run, a request
-  for review.
-- **Decision** — a choice an agent commits to, together with the reasoning behind it.
-- **Evidence** — what supports or undermines a decision: test output, experiment results,
-  benchmarks, citations, reviewer objections.
-- **Session** — the bounded span of an agent's work, with its own context and history.
+- **Workspace** — an isolated unit of work, backed by a git worktree and a branch.
+- **Agent** — an external actor plus the adapter that connects it.
+- **Attempt** — one bounded run of an agent toward a goal. Attempts are the unit of comparison,
+  snapshotting, and merging.
+- **Action** — a single observable step: a command, an edit, a tool call, with its result.
+- **Decision** — a choice an agent commits to, with the reasoning and the alternatives it rejected.
+- **Evidence** — observed support for or against a decision: real test output, measured results,
+  artifacts. An agent's claim is not evidence until something verifies it.
+- **Snapshot** — a restorable state of an attempt at a point in time.
 
 The platform's job is to keep these linked: every decision traceable to the actions that preceded
 it and the evidence that backs it.
@@ -61,12 +80,14 @@ it and the evidence that backs it.
 Pre-alpha, design phase. What exists today:
 
 - [x] Repository, license, and contribution guide
-- [ ] Data model for actions, decisions, and evidence
-- [ ] Workspace isolation and lifecycle
-- [ ] Agent adapter interface (Claude Code, Codex, custom agents)
-- [ ] Decision and evidence log
-- [ ] Replay and reproducibility tooling
-- [ ] Conflict detection between concurrent agents
+- [x] Architecture and core concepts documented
+- [ ] Cargo workspace and core crate
+- [ ] SQLite schema for events, decisions, and evidence
+- [ ] Worktree-based isolation and attempt lifecycle
+- [ ] `kap` CLI skeleton
+- [ ] Adapter interface and a first adapter (Claude Code or Codex)
+- [ ] Snapshots, diff between attempts, and restore
+- [ ] Merge and conflict handling
 
 ## Getting started
 
