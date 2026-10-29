@@ -157,8 +157,9 @@ claude                # work as usual; KAP records what happens
 | `PostToolUseFailure` | Records the failure and its message. No exit code is invented. |
 | `Stop` | Closes the run and snapshots changed files as evidence, so edits made through a shell are covered too. |
 
-The hooks call `kap`, so the binary must be on `PATH`. Commit `.claude/settings.json` to share the
-setup with everyone working in the repository.
+`kap hook setup` writes the absolute path of the `kap` binary into the hooks, so they work even when
+`kap` is not on `PATH`. Commit `.claude/settings.json` to share the setup with everyone working in
+the repository.
 
 When the attempt is done, compare it and decide:
 

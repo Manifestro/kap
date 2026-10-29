@@ -31,6 +31,8 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Show where you are and what is recorded
+    Status,
     /// Work with attempts
     Attempt {
         #[command(subcommand)]
@@ -276,6 +278,12 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Status => {
+            let repo = open_repo()?;
+            print_status(&repo)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
         Command::Attempt { command } => {
             let repo = open_repo()?;
             match command {
@@ -371,8 +379,10 @@ fn run() -> Result<ExitCode, String> {
 
         Command::Log { attempt } => {
             let repo = open_repo()?;
-            let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-            print_log(&repo, &attempt_id)?;
+            match resolve_attempt(&repo, attempt.as_deref())? {
+                Some(attempt_id) => print_log(&repo, &attempt_id)?,
+                None => print_all_logs(&repo)?,
+            }
             Ok(ExitCode::SUCCESS)
         }
 
@@ -520,6 +530,10 @@ fn run() -> Result<ExitCode, String> {
                 outcome.branch,
                 short_commit(&outcome.commit),
                 outcome.files
+            );
+            println!(
+                "Its worktree is still in place; `kap attempt clean --attempt {}` removes it.",
+                outcome.attempt_id
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -682,8 +696,10 @@ fn setup_hooks(checkout: &Path) -> Result<(), String> {
         .as_object_mut()
         .ok_or_else(|| "`hooks` in settings.json must be an object".to_string())?;
 
+    let binary = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kap"));
+
     for (event, subcommand) in HOOK_EVENTS {
-        let command = format!("kap hook {subcommand}");
+        let command = hook_command(&binary, subcommand);
         let entries = hooks
             .entry(*event)
             .or_insert_with(|| serde_json::json!([]))
@@ -712,7 +728,10 @@ fn setup_hooks(checkout: &Path) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&settings).map_err(show)?;
     std::fs::write(&path, format!("{text}\n")).map_err(show)?;
     println!("Wired KAP hooks into {}", path.display());
-    println!("The hooks call `kap`, so the binary must be on PATH. Commit this file to share it.");
+    println!(
+        "The hooks call {}, so they work without KAP on PATH. Commit this file to share it.",
+        binary.display()
+    );
     Ok(())
 }
 
@@ -749,6 +768,81 @@ fn print_snapshot(snapshot: &Snapshot) {
     if let Some(note) = &snapshot.note {
         println!("  note: {note}");
     }
+}
+
+fn hook_command(binary: &Path, subcommand: &str) -> String {
+    let binary = binary.to_string_lossy();
+    if binary.contains(' ') {
+        format!("\"{binary}\" hook {subcommand}")
+    } else {
+        format!("{binary} hook {subcommand}")
+    }
+}
+
+fn print_status(repo: &Repo) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(show)?;
+    let machine = repo.machine_id().map_err(show)?;
+
+    println!("repo:    {}", repo.root().display());
+    println!("store:   {}", repo.kap_dir().display());
+    println!("machine: {machine}");
+
+    match attempt_at(repo, &cwd) {
+        Some(attempt_id) => {
+            let attempt = repo.attempt(&attempt_id).map_err(show)?;
+            let changes = repo.changes_since_base(&attempt_id).map_err(show)?;
+            let decisions = repo.decisions(&attempt_id).map_err(show)?;
+            let evidence = repo.evidence(&attempt_id).map_err(show)?;
+            let review = repo.latest_review(&attempt_id).map_err(show)?;
+            let observed = evidence.iter().filter(|entry| entry.observed).count();
+
+            println!();
+            println!("attempt: {}  {}", attempt.id, attempt.state);
+            println!("  label:  {}", attempt.label);
+            println!("  branch: {}", attempt.branch);
+            println!("  changed files: {}", changes.len());
+            println!("  decisions: {}", decisions.len());
+            println!(
+                "  evidence: {observed} observed, {} reported",
+                evidence.len() - observed
+            );
+            match review {
+                Some(review) => println!(
+                    "  review: {} at {}",
+                    review.verdict,
+                    short_commit(&review.head_commit)
+                ),
+                None => println!("  review: none"),
+            }
+        }
+        None => {
+            let open = repo
+                .attempts()
+                .map_err(show)?
+                .iter()
+                .filter(|attempt| attempt.state == kap_core::model::AttemptState::Open)
+                .count();
+            println!();
+            println!("attempt: none (you are in the main checkout)");
+            println!("open attempts: {open}");
+        }
+    }
+
+    Ok(())
+}
+
+fn print_all_logs(repo: &Repo) -> Result<(), String> {
+    let attempts = repo.attempts().map_err(show)?;
+    if attempts.is_empty() {
+        println!("No attempts yet.");
+        return Ok(());
+    }
+
+    for attempt in attempts.iter().rev() {
+        println!("== {}  {}  {}", attempt.id, attempt.state, attempt.label);
+        print_log(repo, &attempt.id)?;
+    }
+    Ok(())
 }
 
 fn print_review(repo: &Repo, attempt_id: &str) -> Result<(), String> {

@@ -219,6 +219,7 @@ An adapter must never be required for reading history.
 
 ```text
 kap init                     # create .kap/ in a repository                        [done]
+kap status                   # where am I, what is open                           [done]
 kap attempt start            # open a new attempt (worktree + branch)              [done]
 kap attempt close            # close an attempt and freeze its history          [done]
 kap attempt clean            # drop a closed attempt's worktree, keep its branch [done]
