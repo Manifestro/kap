@@ -7,6 +7,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-30
+
+### Added
+
+- Credentials are redacted before they are stored: token shapes (`sk-`, `hf_`, `rpa_`, `ghp_`,
+  `AKIA`, `xox`, private keys), `*_API_KEY` / `*_TOKEN` values, `Authorization: Bearer …`,
+  `user:secret@host`, `KEY=value` and `--password` flags become `[REDACTED]`, the key name is kept,
+  and the event is marked in `kap log`. `num_tokens=…` and similar log lines are left alone.
+- Redaction also covers file contents: files recorded by a write hook, by the `Stop` snapshot, and
+  by `kap evidence attach`. `kap snapshot create` leaves a file holding a credential out of the git
+  snapshot entirely, and says how many.
+
+### Fixed
+
+- `kap attempt clean` no longer deletes untracked or ignored files silently — reports, checkpoints,
+  and model runs made `git worktree remove --force` destroy data. It now refuses and lists how many
+  files would go; `--force` deletes them.
+- Snapshots no longer copy unbounded files. A `Stop` skips files over 16 MiB and stops at 64 MiB,
+  logging what it skipped, and `kap snapshot create` leaves oversized files out of the snapshot.
+- Untracked directories are now walked file by file; `git status` collapses them to `dir/`, so their
+  contents were never recorded.
+- A file over 1 MiB that changed on every turn — a training log — was copied whole each time. Only
+  its first version keeps its content now; later versions record the hash, marked partial.
+- A session started in the main checkout recorded nothing even when it worked inside a worktree.
+  Hooks now find the attempt from the event's own `cwd` and from the path a write touched, a `Stop`
+  closes the attempt the session has been writing to, and a session that starts outside every
+  attempt is told where the open ones are.
+- `kap snapshot create` excluded oversized files with an unanchored ignore pattern, so a file of
+  the same name elsewhere was left out too, and a tracked file over the limit was still copied.
+  Exclusions are now literal pathspecs.
+
 ## [0.1.2] - 2026-10-29
 
 ### Added
@@ -22,22 +53,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   binary they call still exists, recording is not disabled, and the current directory is one where
   hooks record. It exits non-zero when something is missing.
 - `kap status` says whether the hooks are installed and whether recording is disabled here.
-
-### Added
-
-- Credentials are redacted before they are stored: common token shapes (`sk-`, `hf_`, `ghp_`,
-  `AKIA`, `xox`, private keys, `KEY=value`) become `[REDACTED]` in commands and output, and the
-  event is marked in `kap log`.
-
-### Fixed
-
-- `kap attempt clean` no longer deletes untracked or ignored files silently — reports, checkpoints,
-  and model runs made `git worktree remove --force` destroy data. It now refuses and lists how many
-  files would go; `--force` deletes them.
-- Snapshots no longer copy unbounded files. A `Stop` skips files over 16 MiB and stops at 64 MiB,
-  logging what it skipped, and `kap snapshot create` leaves oversized files out of the snapshot.
-- Untracked directories are now walked file by file; `git status` collapses them to `dir/`, so their
-  contents were never recorded.
 
 ### Changed
 
@@ -116,7 +131,8 @@ shared with another machine.
 - Append-only SQLite schema with versioned migrations, and a CI job that runs formatting, lints, and
   tests on every push and pull request.
 
-[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Manifestro/kap/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Manifestro/kap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Manifestro/kap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Manifestro/kap/releases/tag/v0.1.0

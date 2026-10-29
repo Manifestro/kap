@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/kap-core", "crates/kap-cli"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT"
 authors = ["Manifestro"]
@@ -13,7 +13,7 @@ keywords = ["agents", "ai", "versioning", "provenance"]
 categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
-kap-core = { path = "crates/kap-core", version = "0.1.2" }
+kap-core = { path = "crates/kap-core", version = "0.1.3" }
 
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
