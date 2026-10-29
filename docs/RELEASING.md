@@ -54,7 +54,8 @@ The package names are `kap-core` and `kap-cli`; both are free. The `kap` package
 unrelated project, so it is never used — the binary is still called `kap`.
 
 Publishing is manual and needs a token (`cargo login`), because the upload is an identity-bound
-action:
+action. The crates.io account must also have a **verified email address** — without one every upload
+is rejected with `400 Bad Request`, after the build has already run:
 
 ```sh
 cargo publish -p kap-core     # first: kap-cli depends on it by version
