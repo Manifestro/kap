@@ -100,7 +100,8 @@ impl Repo {
         };
 
         let objects = self.objects();
-        let (kind, mut command, exit_code, stdout, mut stderr) = describe(tool, input, failed);
+        let (kind, command, exit_code, stdout, mut stderr) = describe(tool, input, failed);
+        let mut command = command;
 
         if let Some(error) = &input.error {
             if !stderr.is_empty() {
@@ -130,8 +131,13 @@ impl Repo {
             }
         }
 
+        let (command, command_redacted) = crate::redact::text(&command);
+        let (stdout, stdout_redacted) = crate::redact::bytes(&stdout);
+        let (stderr, stderr_redacted) = crate::redact::bytes(&stderr);
+
         let stdout = truncate(stdout);
         let stderr = truncate(stderr);
+        let redacted = command_redacted || stdout_redacted || stderr_redacted;
 
         let event = ToolEvent {
             id: event_id(attempt, input),
@@ -152,6 +158,7 @@ impl Repo {
             },
             observed: true,
             occurred_at: now_rfc3339(),
+            redacted,
             agent_id: input.agent_id.clone(),
             agent_type: input.agent_type.clone(),
         };

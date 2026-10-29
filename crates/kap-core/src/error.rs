@@ -60,6 +60,12 @@ pub enum Error {
     #[error("decision `{id}` not found for attempt `{attempt}`")]
     DecisionNotFound { id: String, attempt: String },
 
+    #[error(
+        "the worktree has {count} untracked or ignored file(s); commit them, or pass --force to \
+         delete them with the worktree"
+    )]
+    CleanRefused { count: usize },
+
     #[error("attempt `{id}` is still open; close it before cleaning up")]
     AttemptOpen { id: String },
 

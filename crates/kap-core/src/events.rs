@@ -60,20 +60,26 @@ impl Repo {
     ) -> Result<ToolEvent> {
         let objects = self.objects();
 
-        let stdout = cap(stdout.to_vec());
-        let stderr = cap(stderr.to_vec());
+        let (command_text, command_redacted) = crate::redact::text(&command.join(" "));
+        let (stdout, stdout_redacted) = crate::redact::bytes(stdout);
+        let (stderr, stderr_redacted) = crate::redact::bytes(stderr);
+
+        let stdout = cap(stdout);
+        let stderr = cap(stderr);
+        let redacted = command_redacted || stdout_redacted || stderr_redacted;
 
         let event = ToolEvent {
             id: format!("event-{}", new_id()),
             attempt_id: attempt_id.to_string(),
             run_id: None,
             kind: "command".to_string(),
-            command: Some(command.join(" ")),
+            command: Some(command_text),
             exit_code: Some(exit_code),
             stdout_hash: Some(objects.put(&stdout)?),
             stderr_hash: Some(objects.put(&stderr)?),
             observed: true,
             occurred_at: now_rfc3339(),
+            redacted,
             agent_id: None,
             agent_type: None,
         };

@@ -23,6 +23,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hooks record. It exits non-zero when something is missing.
 - `kap status` says whether the hooks are installed and whether recording is disabled here.
 
+### Added
+
+- Credentials are redacted before they are stored: common token shapes (`sk-`, `hf_`, `ghp_`,
+  `AKIA`, `xox`, private keys, `KEY=value`) become `[REDACTED]` in commands and output, and the
+  event is marked in `kap log`.
+
+### Fixed
+
+- `kap attempt clean` no longer deletes untracked or ignored files silently — reports, checkpoints,
+  and model runs made `git worktree remove --force` destroy data. It now refuses and lists how many
+  files would go; `--force` deletes them.
+- Snapshots no longer copy unbounded files. A `Stop` skips files over 16 MiB and stops at 64 MiB,
+  logging what it skipped, and `kap snapshot create` leaves oversized files out of the snapshot.
+- Untracked directories are now walked file by file; `git status` collapses them to `dir/`, so their
+  contents were never recorded.
+
 ### Changed
 
 - A run no longer records which harness produced it. KAP talks to hooks, not to Claude Code, so

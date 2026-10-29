@@ -72,6 +72,8 @@ pub struct ToolEvent {
     pub stderr_hash: Option<String>,
     pub observed: bool,
     pub occurred_at: String,
+    /// Whether secrets were removed from the command or its output before storing.
+    pub redacted: bool,
     /// Set when a Claude Code subagent made this call rather than the main agent.
     pub agent_id: Option<String>,
     pub agent_type: Option<String>,

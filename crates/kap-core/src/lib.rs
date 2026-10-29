@@ -15,6 +15,7 @@ pub mod git;
 pub mod hooks;
 pub mod model;
 pub mod objects;
+pub mod redact;
 pub mod repo;
 pub mod review;
 pub mod snapshot;

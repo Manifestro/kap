@@ -149,6 +149,9 @@ enum AttemptCommand {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
+        /// Delete untracked and ignored files (reports, checkpoints) with the worktree
+        #[arg(long)]
+        force: bool,
     },
     /// Close an attempt and freeze its history
     Close {
@@ -318,9 +321,9 @@ fn run() -> Result<ExitCode, String> {
                     print_attempt(&attempt);
                     Ok(ExitCode::SUCCESS)
                 }
-                AttemptCommand::Clean { attempt } => {
+                AttemptCommand::Clean { attempt, force } => {
                     let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-                    let outcome = repo.clean_attempt(&attempt_id).map_err(show)?;
+                    let outcome = repo.clean_attempt(&attempt_id, force).map_err(show)?;
                     match (outcome.worktree_removed, outcome.branch_deleted) {
                         (true, true) => {
                             println!("Removed the worktree and the merged branch of {attempt_id}.")
@@ -533,10 +536,15 @@ fn run() -> Result<ExitCode, String> {
             match command {
                 SnapshotCommand::Create { attempt, note } => {
                     let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-                    let snapshot = repo
+                    let (snapshot, skipped) = repo
                         .create_snapshot(&attempt_id, note.as_deref())
                         .map_err(show)?;
                     print_snapshot(&snapshot);
+                    if skipped > 0 {
+                        println!(
+                            "  {skipped} file(s) over the size limit were left out of the snapshot"
+                        );
+                    }
                     Ok(ExitCode::SUCCESS)
                 }
                 SnapshotCommand::List { attempt } => {
@@ -680,16 +688,22 @@ fn print_event(event: &ToolEvent) {
         Some(code) => format!("  exit {code}"),
         None => String::new(),
     };
+    let redacted = if event.redacted {
+        "  [secrets redacted]"
+    } else {
+        ""
+    };
     let agent = match &event.agent_type {
         Some(kind) => format!("  [subagent: {kind}]"),
         None => String::new(),
     };
     println!(
-        "{}  {:<9} {}{}{}",
+        "{}  {:<9} {}{}{}{}",
         time_of(&event.occurred_at),
         event.kind,
         summarise(command),
         outcome,
+        redacted,
         agent
     );
 }
@@ -778,7 +792,16 @@ fn run_hook(repo: &Repo, attempt_id: &str, command: HookCommand, json: &str) -> 
         HookCommand::Stop => {
             repo.finish_run_for_session(input.session(), "completed")
                 .map_err(show)?;
-            repo.record_worktree_snapshot(&attempt).map_err(show)?;
+            let report = repo.record_worktree_snapshot(&attempt).map_err(show)?;
+            if report.skipped > 0 {
+                log_hook_failure(
+                    repo,
+                    &format!(
+                        "snapshot skipped {} file(s) over the size limit",
+                        report.skipped
+                    ),
+                );
+            }
         }
         HookCommand::Setup => unreachable!("setup is handled before reading stdin"),
     }

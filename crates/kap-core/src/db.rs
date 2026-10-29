@@ -46,6 +46,7 @@ const TABLES: &[(&str, &[&str])] = &[
             "stderr_hash",
             "observed",
             "occurred_at",
+            "redacted",
             "agent_id",
             "agent_type",
         ],
@@ -117,6 +118,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_meta.sql"),
     include_str!("../migrations/0008_subagents.sql"),
     include_str!("../migrations/0009_drop_runs_agent.sql"),
+    include_str!("../migrations/0010_redacted.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -244,8 +246,9 @@ impl Db {
             .conn
             .execute(
                 "INSERT OR IGNORE INTO tool_events (id, attempt_id, run_id, kind, command, \
-                 exit_code, output_hash, stderr_hash, observed, occurred_at, agent_id, \
-                 agent_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 exit_code, output_hash, stderr_hash, observed, occurred_at, redacted, \
+                 agent_id, agent_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, \
+                 ?12, ?13)",
                 rusqlite::params![
                     event.id,
                     event.attempt_id,
@@ -257,6 +260,7 @@ impl Db {
                     event.stderr_hash,
                     event.observed as i64,
                     event.occurred_at,
+                    event.redacted as i64,
                     event.agent_id,
                     event.agent_type,
                 ],
@@ -271,7 +275,8 @@ impl Db {
             .conn
             .prepare(
                 "SELECT id, attempt_id, run_id, kind, command, exit_code, output_hash, \
-                 stderr_hash, observed, occurred_at, agent_id, agent_type FROM tool_events \
+                 stderr_hash, observed, occurred_at, redacted, agent_id, agent_type \
+                 FROM tool_events \
                  WHERE ?1 IS NULL OR attempt_id = ?1 ORDER BY occurred_at ASC, id ASC",
             )
             .map_err(|e| Error::db(&self.path, e))?;
@@ -289,6 +294,7 @@ impl Db {
                     stderr_hash: row.get("stderr_hash")?,
                     observed: row.get::<_, i64>("observed")? != 0,
                     occurred_at: row.get("occurred_at")?,
+                    redacted: row.get::<_, i64>("redacted")? != 0,
                     agent_id: row.get("agent_id")?,
                     agent_type: row.get("agent_type")?,
                 })

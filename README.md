@@ -257,8 +257,14 @@ These are known and deliberate for now, not oversights:
 - **`.kap/` is the only copy of the history.** SQLite is crash-consistent, but there is no repair
   tool and no automatic backup: a corrupted `kap.db` loses decisions, evidence, and events. Branches
   and objects survive; `kap push` is the backup that exists.
-- **Recorded output is stored verbatim.** If a command prints a secret, KAP stores it in `.kap/` and
-  sends it to the remote on `kap push`. There is no redaction.
+- **Secrets are redacted, but not perfectly.** Common credential shapes (`sk-`, `hf_`, `ghp_`,
+  `AKIA`, `xox`, private keys, `KEY=value`) are replaced before anything is stored, and the record
+  says it was redacted. A shape the patterns do not know still gets through, file artifacts are
+  stored as they are, and history written before this change is not rewritten.
+- **Large files are left out.** A snapshot skips files over 16 MiB and stops at 64 MiB per `Stop`,
+  logging what it skipped; `kap snapshot create` leaves oversized files out of the snapshot too.
+- **`kap attempt clean` refuses to delete untracked or ignored files** — reports, checkpoints, model
+  runs — unless you pass `--force`.
 - **Hooks see tool calls, not reasoning.** Claude Code hooks capture tool calls and their output; they
   do not capture prompts, thinking, or model messages. A tool's arguments are recorded for shell
   commands and file edits only.

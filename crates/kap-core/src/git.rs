@@ -264,6 +264,16 @@ impl Git {
         Ok(())
     }
 
+    /// Changed paths, listing every file inside an untracked directory instead of the directory.
+    pub fn status_porcelain_all(&self, dir: &Path) -> Result<String> {
+        self.run_in(dir, &["status", "--porcelain", "--untracked-files=all"])
+    }
+
+    /// Changed paths in a working tree, including untracked and ignored files.
+    pub fn status_porcelain_ignored(&self, dir: &Path) -> Result<String> {
+        self.run_in(dir, &["status", "--porcelain", "--ignored"])
+    }
+
     /// Changed paths in a working tree, including untracked files.
     pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
         self.run_in(dir, &["status", "--porcelain"])

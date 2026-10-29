@@ -631,14 +631,17 @@ fn a_worktree_snapshot_records_each_changed_file_once() {
 
     fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write file");
     assert_eq!(
-        repo.record_worktree_snapshot(&attempt).expect("snapshot"),
+        repo.record_worktree_snapshot(&attempt)
+            .expect("snapshot")
+            .recorded,
         1
     );
 
     // Unchanged content is not recorded twice.
     assert_eq!(
         repo.record_worktree_snapshot(&attempt)
-            .expect("snapshot again"),
+            .expect("snapshot again")
+            .recorded,
         0
     );
 
@@ -656,7 +659,8 @@ fn a_worktree_snapshot_records_each_changed_file_once() {
     fs::write(attempt.worktree.join("calc.py"), "print(2)\n").expect("write file again");
     assert_eq!(
         repo.record_worktree_snapshot(&attempt)
-            .expect("third snapshot"),
+            .expect("third snapshot")
+            .recorded,
         1
     );
 }
@@ -757,9 +761,10 @@ fn a_snapshot_restores_as_a_new_attempt() {
     fs::write(attempt.worktree.join("README.md"), "# changed\n").expect("modify README");
     fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write calc");
 
-    let snapshot = repo
+    let (snapshot, skipped) = repo
         .create_snapshot(&attempt.id, Some("before the refactor"))
         .expect("snapshot");
+    assert_eq!(skipped, 0);
     assert_eq!(snapshot.note.as_deref(), Some("before the refactor"));
     assert_eq!(
         repo.snapshots(&attempt.id).expect("list snapshots").len(),
@@ -802,7 +807,7 @@ fn cleaning_keeps_an_unmerged_branch() {
         })
         .expect("start attempt");
 
-    match repo.clean_attempt(&attempt.id) {
+    match repo.clean_attempt(&attempt.id, false) {
         Err(Error::AttemptOpen { .. }) => {}
         other => panic!("expected AttemptOpen, got {other:?}"),
     }
@@ -813,7 +818,7 @@ fn cleaning_keeps_an_unmerged_branch() {
     git(&attempt.worktree, &["commit", "-m", "unmerged work"]);
 
     repo.close_attempt(&attempt.id).expect("close");
-    let outcome = repo.clean_attempt(&attempt.id).expect("clean");
+    let outcome = repo.clean_attempt(&attempt.id, false).expect("clean");
     assert!(outcome.worktree_removed);
     assert!(!outcome.branch_deleted);
     assert!(!attempt.worktree.exists());
@@ -832,7 +837,7 @@ fn cleaning_a_merged_attempt_also_removes_its_branch() {
         .expect("approve");
     repo.merge_attempt(&attempt.id).expect("merge");
 
-    let outcome = repo.clean_attempt(&attempt.id).expect("clean");
+    let outcome = repo.clean_attempt(&attempt.id, false).expect("clean");
     assert!(outcome.worktree_removed);
     assert!(outcome.branch_deleted);
     assert!(!repo
@@ -1137,4 +1142,72 @@ fn init_outside_a_repository_reports_the_resolved_path() {
         }
         other => panic!("expected NotAGitRepository, got {other:?}"),
     }
+}
+
+#[test]
+fn cleaning_refuses_to_delete_untracked_files_without_force() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "artifacts",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    // The kind of file a run writes and git ignores: reports and checkpoints.
+    fs::create_dir_all(attempt.worktree.join("reports")).expect("create dir");
+    fs::write(attempt.worktree.join("reports/full_run.md"), "results").expect("write report");
+    fs::write(attempt.worktree.join("model.pt"), "weights").expect("write checkpoint");
+
+    repo.close_attempt(&attempt.id).expect("close");
+
+    match repo.clean_attempt(&attempt.id, false) {
+        Err(Error::CleanRefused { count }) => assert!(count >= 2),
+        other => panic!("expected CleanRefused, got {other:?}"),
+    }
+    assert!(attempt.worktree.join("reports/full_run.md").is_file());
+
+    // Explicitly asked for it: the worktree goes, artifacts included.
+    repo.clean_attempt(&attempt.id, true).expect("force clean");
+    assert!(!attempt.worktree.exists());
+}
+
+#[test]
+fn secrets_are_redacted_before_they_are_stored() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "secret",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let output = repo
+        .exec(
+            &attempt.id,
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz; echo done".to_string(),
+            ],
+        )
+        .expect("exec");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("sk-abcdefghijklmnopqrstuvwxyz"));
+
+    let events = repo.tool_events(Some(&attempt.id)).expect("events");
+    assert_eq!(events.len(), 1);
+    assert!(events[0].redacted, "the record should say it was redacted");
+
+    let stored = repo
+        .objects()
+        .get(events[0].stdout_hash.as_deref().expect("stdout"))
+        .expect("read object");
+    let stored = String::from_utf8_lossy(&stored);
+    assert!(
+        !stored.contains("sk-abcdefghijklmnopqrstuvwxyz"),
+        "secret reached the store: {stored}"
+    );
+    assert!(stored.contains("[REDACTED]"));
 }
