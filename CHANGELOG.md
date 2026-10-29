@@ -7,6 +7,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4-test-1] - 2026-10-30
+
+### Added
+
+- `.kap/worktree` makes a fresh attempt usable: `link <path>` symlinks a path from the main
+  checkout (datasets, checkpoints), `setup <command>` runs in the new worktree (installing an
+  environment), and `disposable <path>` marks what setup creates. `kap attempt start` applies it,
+  `--no-setup` skips the commands, and `kap attempt prepare` applies it to an existing attempt.
+  Setup commands are recorded; a failed one stops the rest and exits 3.
+- Redaction catches keys with no telling name: a run of 32+ letters and digits with mixed case and
+  at least 4 bits of entropy per character. On the dauys repository (66 MB of code, logs and
+  reports) no ordinary text reaches that, while 99.6% of random 32-character keys do. JWTs and
+  netrc-style `password <value>` are recognised too.
+
+### Changed
+
+- A credential name is redacted only when its value is a literal. `api_key=args.api_key`,
+  `pad_token = tokenizer.eos_token`, `password=$GH_TOKEN` and `token = os.environ.get(...)` are code
+  that handles a key and stay readable.
+- A large file that keeps changing keeps its first and its latest version, not only the first.
+- One harness session gets a run in each attempt it works in, and `Stop` snapshots every open
+  attempt the session wrote to. Migration 0011 replaces the one-run-per-session index.
+
+### Fixed
+
+- The session briefing told agents to run commands through `kap exec`, although the hooks already
+  record them: each command was recorded twice, and Claude Code stopped to ask permission for the
+  wrapped form. The briefing now says tool calls are recorded automatically.
+- `kap attempt clean` counted shared links and setup output such as `.venv` as files you would
+  lose, and could reach through a link while deleting the worktree. Links are now removed first.
+
 ## [0.1.3] - 2026-10-30
 
 ### Added

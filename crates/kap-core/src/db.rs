@@ -107,6 +107,9 @@ pub struct ImportStats {
     pub updated: usize,
 }
 
+/// One recorded version of a file: `(evidence id, content hash, content kept)`.
+pub type EvidenceEnd = (String, String, bool);
+
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
@@ -119,6 +122,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0008_subagents.sql"),
     include_str!("../migrations/0009_drop_runs_agent.sql"),
     include_str!("../migrations/0010_redacted.sql"),
+    include_str!("../migrations/0011_run_per_attempt.sql"),
 ];
 
 const ATTEMPT_COLUMNS: &str =
@@ -439,28 +443,43 @@ impl Db {
         Ok(())
     }
 
-    /// The run belonging to a harness session.
-    pub fn run_by_session(&self, session_id: &str) -> Result<Option<Run>> {
-        let run = self
+    /// The run a harness session has in one attempt.
+    pub fn run_by_session(&self, session_id: &str, attempt_id: &str) -> Result<Option<Run>> {
+        Ok(self
+            .runs_where(
+                "session_id = ?1 AND attempt_id = ?2",
+                rusqlite::params![session_id, attempt_id],
+            )?
+            .pop())
+    }
+
+    /// Every run a harness session has, oldest first: one per attempt it worked in.
+    pub fn runs_by_session(&self, session_id: &str) -> Result<Vec<Run>> {
+        self.runs_where("session_id = ?1", rusqlite::params![session_id])
+    }
+
+    fn runs_where(&self, condition: &str, params: impl rusqlite::Params) -> Result<Vec<Run>> {
+        let mut statement = self
             .conn
-            .query_row(
+            .prepare(&format!(
                 "SELECT id, attempt_id, session_id, status, started_at, finished_at \
-                 FROM runs WHERE session_id = ?1",
-                [session_id],
-                |row| {
-                    Ok(Run {
-                        id: row.get("id")?,
-                        attempt_id: row.get("attempt_id")?,
-                        session_id: row.get("session_id")?,
-                        status: row.get("status")?,
-                        started_at: row.get("started_at")?,
-                        finished_at: row.get("finished_at")?,
-                    })
-                },
-            )
-            .optional()
+                 FROM runs WHERE {condition} ORDER BY started_at, id"
+            ))
             .map_err(|e| Error::db(&self.path, e))?;
-        Ok(run)
+        let rows = statement
+            .query_map(params, |row| {
+                Ok(Run {
+                    id: row.get("id")?,
+                    attempt_id: row.get("attempt_id")?,
+                    session_id: row.get("session_id")?,
+                    status: row.get("status")?,
+                    started_at: row.get("started_at")?,
+                    finished_at: row.get("finished_at")?,
+                })
+            })
+            .map_err(|e| Error::db(&self.path, e))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::db(&self.path, e))
     }
 
     /// Mark a session's run as finished.
@@ -486,6 +505,52 @@ impl Db {
             .optional()
             .map_err(|e| Error::db(&self.path, e))?;
         Ok(found.is_some())
+    }
+
+    /// The first and the latest evidence recorded for a path in this attempt.
+    pub fn path_evidence_ends(
+        &self,
+        attempt_id: &str,
+        path: &str,
+    ) -> Result<Option<(EvidenceEnd, EvidenceEnd)>> {
+        let query = |order: &str| {
+            self.conn
+                .query_row(
+                    &format!(
+                        "SELECT id, artifact_hash, complete FROM evidence \
+                         WHERE attempt_id = ?1 AND path = ?2 AND artifact_hash IS NOT NULL \
+                         ORDER BY recorded_at {order}, id {order} LIMIT 1"
+                    ),
+                    rusqlite::params![attempt_id, path],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(|e| Error::db(&self.path, e))
+        };
+        Ok(query("ASC")?.zip(query("DESC")?))
+    }
+
+    /// Mark evidence whose content is no longer kept.
+    pub fn mark_evidence_partial(&self, evidence_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE evidence SET complete = 0 WHERE id = ?1",
+                [evidence_id],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// How many records still need the content behind `hash`.
+    pub fn content_references(&self, hash: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM tool_events WHERE output_hash = ?1 OR stderr_hash = ?1) \
+                      + (SELECT COUNT(*) FROM evidence WHERE artifact_hash = ?1 AND complete = 1)",
+                [hash],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db(&self.path, e))
     }
 
     /// The hash most recently recorded for a path in this attempt.

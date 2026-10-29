@@ -143,6 +143,18 @@ enum AttemptCommand {
         /// Commit or ref to branch from (defaults to HEAD)
         #[arg(long, value_name = "REV")]
         base: Option<String>,
+        /// Create the links from .kap/worktree but skip its setup commands
+        #[arg(long)]
+        no_setup: bool,
+    },
+    /// Link shared paths and run setup from .kap/worktree in an existing attempt
+    Prepare {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+        /// Create the links but skip the setup commands
+        #[arg(long)]
+        no_setup: bool,
     },
     /// Remove the worktree of a closed attempt
     Clean {
@@ -212,7 +224,7 @@ enum SnapshotCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Copy, Subcommand)]
 enum HookCommand {
     /// SessionStart hook: brief the agent on prior work
     SessionStart,
@@ -310,7 +322,12 @@ fn run() -> Result<ExitCode, String> {
         Command::Attempt { command } => {
             let repo = open_repo()?;
             match command {
-                AttemptCommand::Start { label, task, base } => {
+                AttemptCommand::Start {
+                    label,
+                    task,
+                    base,
+                    no_setup,
+                } => {
                     let attempt = repo
                         .start_attempt(NewAttempt {
                             label: &label,
@@ -319,7 +336,12 @@ fn run() -> Result<ExitCode, String> {
                         })
                         .map_err(show)?;
                     print_attempt(&attempt);
-                    Ok(ExitCode::SUCCESS)
+                    prepare(&repo, &attempt, !no_setup)
+                }
+                AttemptCommand::Prepare { attempt, no_setup } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let attempt = repo.attempt(&attempt_id).map_err(show)?;
+                    prepare(&repo, &attempt, !no_setup)
                 }
                 AttemptCommand::Clean { attempt, force } => {
                     let attempt_id = require_attempt(&repo, attempt.as_deref())?;
@@ -729,6 +751,33 @@ fn print_decision(decision: &Decision) {
     }
 }
 
+/// Apply `.kap/worktree` to an attempt and say what happened.
+///
+/// The attempt exists whatever happens here; a failed setup is reported and recorded, and the
+/// exit code says so, but nothing is rolled back.
+fn prepare(repo: &Repo, attempt: &Attempt, run_setup: bool) -> Result<ExitCode, String> {
+    let report = repo.prepare_worktree(attempt, run_setup).map_err(show)?;
+    for path in &report.linked {
+        eprintln!("  linked:   {path} -> {}", repo.root().join(path).display());
+    }
+    for path in &report.missing {
+        eprintln!("  missing:  {path} (not in the main checkout, not linked)");
+    }
+    for (command, code) in &report.setup {
+        let state = if *code == 0 { "ok" } else { "FAILED" };
+        eprintln!("  setup:    {command}  -> exit {code} {state}");
+    }
+    if report.setup_ok() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        eprintln!(
+            "setup failed; its output is in `kap log`. Fix it and run `kap attempt prepare --attempt {}`.",
+            attempt.id
+        );
+        Ok(ExitCode::from(3))
+    }
+}
+
 fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
@@ -756,7 +805,7 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
     // A hook must never break the agent's session. Outside a KAP repository there is nothing to
     // record, and inside one a failure is logged rather than shown to the agent.
     let input = HookInput::parse(&json).ok();
-    let Some((repo, attempt_id)) = locate_attempt(&cwd, input.as_ref(), &command) else {
+    let Some((repo, attempts)) = locate_attempts(&cwd, input.as_ref(), &command) else {
         if matches!(command, HookCommand::SessionStart) {
             brief_outside_attempts(&cwd, input.as_ref());
         }
@@ -767,24 +816,26 @@ fn handle_hook(command: HookCommand) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    if let Err(message) = run_hook(&repo, &attempt_id, command, &json) {
-        log_hook_failure(&repo, &message);
+    for attempt_id in &attempts {
+        if let Err(message) = run_hook(&repo, attempt_id, command, &json) {
+            log_hook_failure(&repo, &message);
+        }
     }
 
     Ok(ExitCode::SUCCESS)
 }
 
-/// The attempt a hook event belongs to.
+/// The attempts a hook event belongs to.
 ///
 /// The hook process starts wherever the harness was launched, which is often the main checkout
 /// even while the agent works in an attempt's worktree. So the event itself decides: the
-/// directory it reports, then the file a write touched, then the process directory. A `Stop`
-/// that matches none of them still closes the attempt this session has been writing to.
-fn locate_attempt(
+/// directory it reports, then the file a write touched, then the process directory. A `Stop` also
+/// closes every open attempt this session has been writing to, wherever it stopped.
+fn locate_attempts(
     cwd: &Path,
     input: Option<&HookInput>,
     command: &HookCommand,
-) -> Option<(Repo, String)> {
+) -> Option<(Repo, Vec<String>)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(input) = input {
         if let Some(dir) = input.cwd.as_deref().filter(|dir| !dir.is_empty()) {
@@ -802,27 +853,40 @@ fn locate_attempt(
     }
     candidates.push(cwd.to_path_buf());
 
-    let mut first_repo = None;
+    let mut found: Option<(Repo, Vec<String>)> = None;
     for dir in &candidates {
         let Ok(repo) = Repo::open(dir) else {
             continue;
         };
         if let Some(attempt_id) = attempt_at(&repo, dir) {
-            return Some((repo, attempt_id));
+            found = Some((repo, vec![attempt_id]));
+            break;
         }
-        first_repo.get_or_insert(repo);
+        if found.is_none() {
+            found = Some((repo, Vec::new()));
+        }
     }
 
-    let repo = first_repo?;
-    if !matches!(command, HookCommand::Stop) {
-        return None;
+    let (repo, mut attempts) = found?;
+    if matches!(command, HookCommand::Stop) {
+        if let Some(input) = input {
+            let runs = repo.db().ok()?.runs_by_session(input.session()).ok()?;
+            for run in runs {
+                let open = repo
+                    .attempt(&run.attempt_id)
+                    .is_ok_and(|attempt| attempt.state == AttemptState::Open);
+                if open && !attempts.contains(&run.attempt_id) {
+                    attempts.push(run.attempt_id);
+                }
+            }
+        }
     }
-    let run = repo.db().ok()?.run_by_session(input?.session()).ok()??;
-    let attempt = repo.attempt(&run.attempt_id).ok()?;
-    if attempt.state != AttemptState::Open {
-        return None;
+
+    if attempts.is_empty() {
+        None
+    } else {
+        Some((repo, attempts))
     }
-    Some((repo, attempt.id))
 }
 
 /// Tell an agent that starts outside every attempt where its work would be recorded.

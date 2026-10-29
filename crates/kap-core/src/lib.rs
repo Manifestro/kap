@@ -20,5 +20,6 @@ pub mod repo;
 pub mod review;
 pub mod snapshot;
 pub mod sync;
+pub mod workspace;
 
 pub use error::{Error, Result};

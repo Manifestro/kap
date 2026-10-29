@@ -1272,15 +1272,24 @@ fn a_large_file_that_keeps_changing_is_stored_once() {
         fs::write(&log, &content).expect("write log");
         let report = repo.record_worktree_snapshot(&attempt).expect("snapshot");
         assert_eq!(report.recorded, 1);
-        assert_eq!(report.hash_only, usize::from(turn > 0));
+        assert_eq!(report.hash_only, usize::from(turn == 2));
     }
 
     let evidence = repo.evidence(&attempt.id).expect("list evidence");
     assert_eq!(evidence.len(), 3);
-    assert!(evidence[0].complete);
-    assert!(!evidence[1].complete && !evidence[2].complete);
+    assert!(evidence[0].complete, "the first version is kept");
+    assert!(
+        !evidence[1].complete,
+        "a version in between keeps its hash only"
+    );
+    assert!(evidence[2].complete, "the latest version is kept");
     let stored = walk(&repo.kap_dir().join("objects")).len();
-    assert_eq!(stored, 1, "only the first version keeps its content");
+    assert_eq!(stored, 2, "first and latest versions keep their content");
+    let latest = repo
+        .objects()
+        .get(evidence[2].artifact_hash.as_deref().unwrap())
+        .expect("read latest");
+    assert!(latest.ends_with(b"turn 2\n"));
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -1294,4 +1303,128 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+#[test]
+fn a_prepared_worktree_links_shared_data_and_cleans_without_touching_it() {
+    let (dir, repo) = repository_with_commit();
+    fs::create_dir_all(dir.path().join("data")).expect("create data");
+    fs::write(dir.path().join("data/train.jsonl"), "{}\n").expect("write data");
+    fs::write(
+        repo.kap_dir().join("worktree"),
+        "link data\nlink checkpoints\ndisposable .venv\nsetup mkdir -p .venv && echo ready > .venv/marker\n",
+    )
+    .expect("write config");
+
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "prepared",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    let report = repo.prepare_worktree(&attempt, true).expect("prepare");
+    assert_eq!(report.linked, ["data"]);
+    assert_eq!(report.missing, ["checkpoints"]);
+    assert!(report.setup_ok());
+    assert_eq!(
+        fs::read_to_string(attempt.worktree.join("data/train.jsonl")).expect("read via link"),
+        "{}\n"
+    );
+    assert!(attempt.worktree.join(".venv/marker").is_file());
+
+    let events = repo.tool_events(Some(&attempt.id)).expect("events");
+    assert!(events.iter().any(|event| event
+        .command
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("kap setup:")));
+
+    let (snapshot, _) = repo.create_snapshot(&attempt.id, None).expect("snapshot");
+    let files = git(
+        &attempt.worktree,
+        &["ls-tree", "-r", "--name-only", &snapshot.commit],
+    );
+    assert!(
+        !files.lines().any(|f| f == "data"),
+        "a shared link is not part of a snapshot"
+    );
+
+    // Preparing twice is harmless.
+    let again = repo
+        .prepare_worktree(&attempt, false)
+        .expect("prepare again");
+    assert_eq!(again.present, ["data"]);
+
+    repo.close_attempt(&attempt.id).expect("close");
+    let outcome = repo.clean_attempt(&attempt.id, false).expect("clean");
+    assert!(outcome.worktree_removed);
+    assert!(
+        dir.path().join("data/train.jsonl").is_file(),
+        "cleaning must never reach through a link"
+    );
+}
+
+#[test]
+fn a_failed_setup_stops_and_is_recorded() {
+    let (_dir, repo) = repository_with_commit();
+    fs::write(
+        repo.kap_dir().join("worktree"),
+        "setup exit 7\nsetup touch never-made\n",
+    )
+    .expect("write config");
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "broken-setup",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let report = repo.prepare_worktree(&attempt, true).expect("prepare");
+    assert_eq!(report.setup, [("exit 7".to_string(), 7)]);
+    assert!(!report.setup_ok());
+    assert!(!attempt.worktree.join("never-made").exists());
+}
+
+#[test]
+fn one_session_gets_a_run_in_each_attempt_it_works_in() {
+    let (_dir, repo) = repository_with_commit();
+    let first = repo
+        .start_attempt(NewAttempt {
+            label: "first",
+            task: None,
+            base: None,
+        })
+        .expect("start first");
+    let second = repo
+        .start_attempt(NewAttempt {
+            label: "second",
+            task: None,
+            base: None,
+        })
+        .expect("start second");
+
+    let a = repo
+        .run_for_session(&first.id, "session-1")
+        .expect("run in first");
+    let b = repo
+        .run_for_session(&second.id, "session-1")
+        .expect("run in second");
+    assert_ne!(a.id, b.id);
+    assert_eq!(a.attempt_id, first.id);
+    assert_eq!(b.attempt_id, second.id);
+    assert_eq!(
+        repo.run_for_session(&first.id, "session-1")
+            .expect("again")
+            .id,
+        a.id,
+        "the same pair finds the same run"
+    );
+    let runs = repo
+        .db()
+        .expect("db")
+        .runs_by_session("session-1")
+        .expect("runs");
+    assert_eq!(runs.len(), 2);
 }

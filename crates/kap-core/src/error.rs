@@ -66,6 +66,9 @@ pub enum Error {
     )]
     CleanRefused { count: usize },
 
+    #[error(".kap/worktree, line {line}: {message}")]
+    WorktreeConfig { line: usize, message: String },
+
     #[error("attempt `{id}` is still open; close it before cleaning up")]
     AttemptOpen { id: String },
 

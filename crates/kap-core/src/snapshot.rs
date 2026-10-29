@@ -12,8 +12,9 @@ use crate::repo::Repo;
 const MAX_SNAPSHOT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SNAPSHOT_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Above this size only the first version of a changed file keeps its content. A log rewritten on
-/// every turn would otherwise be copied whole on every Stop; later versions record the hash alone.
+/// Above this size a changed file keeps the content of its first and its latest version only. A
+/// log rewritten on every turn would otherwise be copied whole on every Stop; the versions in
+/// between keep their hash.
 const MAX_HISTORY_FILE_BYTES: u64 = 1024 * 1024;
 
 /// What one snapshot pass recorded.
@@ -22,7 +23,7 @@ pub struct SnapshotReport {
     pub recorded: usize,
     /// Files left out because they were too large.
     pub skipped: usize,
-    /// Large files that changed again: their hash is recorded, their content is not.
+    /// Earlier versions of large files whose content was dropped in favour of the latest.
     pub hash_only: usize,
 }
 
@@ -70,7 +71,14 @@ impl Repo {
 
         // A snapshot must not swallow a checkpoint, a log, or a key. Such files stay in the
         // worktree, outside the snapshot, and are counted so the caller can say so.
-        let (excluded, left_out) = excluded_paths(&git, &worktree)?;
+        let config = self.worktree_config()?;
+        let (mut excluded, left_out) = excluded_paths(&git, &worktree)?;
+        // Shared links point into the main checkout; a snapshot holds the attempt's own files.
+        for path in &config.links {
+            if fs::symlink_metadata(worktree.join(path)).is_ok_and(|m| m.file_type().is_symlink()) {
+                excluded.push(path.clone());
+            }
+        }
         // Exclusions go in as literal pathspecs: they also hold back a tracked file's new
         // content, and a path with glob characters in it means only itself.
         let pathspecs = tmp_dir.join(format!("pathspecs-{id}"));
@@ -162,14 +170,17 @@ impl Repo {
         }
 
         let git = self.git()?;
+        let config = self.worktree_config()?;
 
         // `git worktree remove --force` deletes everything, including files git never tracked:
-        // reports, checkpoints, model runs. Refuse unless the caller says so explicitly.
+        // reports, checkpoints, model runs. Refuse unless the caller says so explicitly. Shared
+        // links and disposable paths from `.kap/worktree` are KAP's own and do not count.
         if !force && attempt.worktree.exists() {
             let leftovers = git.status_porcelain_ignored(&attempt.worktree)?;
             let count = leftovers
                 .lines()
-                .filter(|line| !line.trim().is_empty())
+                .filter_map(status_path)
+                .filter(|path| !config.owns(path))
                 .count();
             if count > 0 {
                 return Err(Error::CleanRefused { count });
@@ -178,6 +189,8 @@ impl Repo {
 
         let worktree_removed = attempt.worktree.exists();
         if worktree_removed {
+            // Unlink before deleting, so nothing can follow a link into the main checkout.
+            self.unlink_shared(&attempt, &config)?;
             git.remove_worktree(&attempt.worktree, true)?;
         }
 
@@ -255,11 +268,19 @@ impl Repo {
                 continue;
             }
 
-            let keep_content = previous.is_none() || metadata.len() <= MAX_HISTORY_FILE_BYTES;
-            if keep_content {
-                objects.put(&bytes)?;
-            } else {
-                hash_only += 1;
+            objects.put(&bytes)?;
+            if metadata.len() > MAX_HISTORY_FILE_BYTES {
+                // The version this one replaces is neither the first nor the latest any more.
+                if let Some((first, latest)) = db.path_evidence_ends(&attempt.id, &path)? {
+                    let (latest_id, latest_hash, latest_complete) = latest;
+                    if latest_id != first.0 && latest_complete {
+                        db.mark_evidence_partial(&latest_id)?;
+                        if db.content_references(&latest_hash)? == 0 {
+                            objects.remove(&latest_hash)?;
+                        }
+                        hash_only += 1;
+                    }
+                }
             }
 
             db.insert_evidence(&Evidence {
@@ -272,7 +293,7 @@ impl Repo {
                 artifact_hash: Some(hash),
                 path: Some(path),
                 observed: true,
-                complete: keep_content,
+                complete: true,
                 recorded_at: now_rfc3339(),
             })?;
             recorded += 1;

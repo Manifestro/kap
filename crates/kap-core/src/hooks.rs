@@ -56,13 +56,14 @@ impl HookInput {
 }
 
 impl Repo {
-    /// The run for a harness session, created on first sight.
+    /// The run a harness session has in an attempt, created on first sight.
     ///
-    /// A run outlives individual hook events: every tool call in a session belongs to it, even if
-    /// the session started before the hooks were installed.
+    /// A run outlives individual hook events: every tool call a session makes in an attempt
+    /// belongs to it, even if the session started before the hooks were installed. A session that
+    /// works in two attempts has a run in each.
     pub fn run_for_session(&self, attempt_id: &str, session_id: &str) -> Result<Run> {
         let db = self.db()?;
-        if let Some(run) = db.run_by_session(session_id)? {
+        if let Some(run) = db.run_by_session(session_id, attempt_id)? {
             return Ok(run);
         }
 
@@ -236,9 +237,12 @@ impl Repo {
         }
 
         out.push_str(
-            "\nRecord a choice with `kap decision add --summary ... --rationale ...`, attach a \
-             file as evidence with `kap evidence attach --file ... --decision ...`, and run \
-             commands through `kap exec -- <command>` so their output is kept.",
+            // Commands are already recorded by the hooks this briefing arrives through. Telling
+            // the agent to wrap them in `kap exec` recorded each one twice and made it ask for
+            // permission to run a command it could have run directly.
+            "\nYour tool calls here are recorded automatically; run commands as usual. Record a \
+             choice with `kap decision add --summary ... --rationale ...`, and attach a file as \
+             evidence with `kap evidence attach --file ... --decision ...`.",
         );
         Ok(out)
     }

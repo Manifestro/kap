@@ -191,6 +191,34 @@ Turn it off when you do not want a session recorded:
 | One repository | `kap disable` — and `kap enable` brings it back |
 | Whole machine | `kap uninstall` |
 
+## Make a worktree usable
+
+A worktree holds only what git tracks. Datasets, checkpoints, and environments are ignored by
+design, so a fresh attempt cannot run the project's tests until they are there. `.kap/worktree`
+says how to get them, one directive per line:
+
+```text
+link data             # symlink the main checkout's data/ into every new worktree
+link checkpoints
+disposable .venv      # made by setup; deleted with the worktree without asking
+setup uv sync --frozen --extra test
+```
+
+`kap attempt start` applies it after creating the worktree: links first, then each `setup` command
+in order, run inside the worktree with `KAP_ROOT`, `KAP_WORKTREE`, and `KAP_ATTEMPT` set. Setup
+commands are recorded in the attempt's history like any other command. A failed setup stops there
+and exits 3; the attempt exists, and `kap attempt prepare` runs it again once fixed.
+`--no-setup` creates the links and skips the commands.
+
+Linked paths are shared, not copied: an attempt that writes into `data/` writes into the main
+checkout's `data/`. Link what attempts read; give anything an attempt writes its own path. Links
+and disposable paths are KAP's own, so `kap attempt clean` removes the links before deleting the
+worktree — it never reaches through one — and does not count either as a file you would lose.
+Snapshots leave the links out.
+
+`.kap/worktree` lives in `.kap/`, which is not versioned: it describes this machine, not the
+project.
+
 ## What the hooks record
 
 KAP does not wrap the agent and does not own its loop. It listens through
@@ -257,12 +285,16 @@ These are known and deliberate for now, not oversights:
 - **`.kap/` is the only copy of the history.** SQLite is crash-consistent, but there is no repair
   tool and no automatic backup: a corrupted `kap.db` loses decisions, evidence, and events. Branches
   and objects survive; `kap push` is the backup that exists.
-- **Secrets are redacted, but not perfectly.** Common credential shapes (`sk-`, `hf_`, `ghp_`,
-  `AKIA`, `xox`, private keys, `KEY=value`) are replaced before anything is stored, and the record
-  says it was redacted. A shape the patterns do not know still gets through, file artifacts are
-  stored as they are, and history written before this change is not rewritten.
+- **Secrets are redacted, but not perfectly.** Known token shapes, credential names with a literal
+  value, JWTs, netrc passwords, and random-looking 32+ character runs are replaced before anything is
+  stored, in command output and in file contents alike, and the record says it was redacted. Two
+  misses are accepted: a hex key with no telling name looks exactly like a commit hash, and a
+  letters-only password (`password=correcthorse`) looks like code. History written before a rule
+  existed is not rewritten.
 - **Large files are left out.** A snapshot skips files over 16 MiB and stops at 64 MiB per `Stop`,
-  logging what it skipped; `kap snapshot create` leaves oversized files out of the snapshot too.
+  logging what it skipped; `kap snapshot create` leaves oversized files out of the snapshot too. A
+  file over 1 MiB that keeps changing keeps the content of its first and latest versions; the ones
+  in between keep their hash.
 - **`kap attempt clean` refuses to delete untracked or ignored files** — reports, checkpoints, model
   runs — unless you pass `--force`.
 - **Hooks see tool calls, not reasoning.** Claude Code hooks capture tool calls and their output; they

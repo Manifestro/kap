@@ -46,6 +46,16 @@ impl ObjectStore {
         Ok(format!("blake3:{hex}"))
     }
 
+    /// Delete the payload behind an address, if it is there.
+    pub fn remove(&self, address: &str) -> Result<()> {
+        let path = self.path_for(hex_of(address)?);
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(Error::io(&path, error)),
+        }
+    }
+
     /// Read the payload behind an address.
     pub fn get(&self, address: &str) -> Result<Vec<u8>> {
         let path = self.path_for(hex_of(address)?);
