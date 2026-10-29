@@ -229,6 +229,35 @@ impl Git {
         Ok(output.stdout)
     }
 
+    /// Changed tracked paths, ignoring untracked files.
+    ///
+    /// A merge does not care about untracked files in general — only about those it would
+    /// overwrite, and git itself refuses in that case. Blocking on every stray file made merging
+    /// fail for reasons unrelated to the attempt.
+    pub fn tracked_changes(&self, dir: &Path) -> Result<String> {
+        self.run_in(dir, &["status", "--porcelain", "--untracked-files=no"])
+    }
+
+    /// Whether `ancestor` is reachable from `descendant`.
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        let args = ["merge-base", "--is-ancestor", ancestor, descendant];
+        let output = self.output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(Error::Git {
+                command: args.join(" "),
+                stderr: failure_text(&output),
+            }),
+        }
+    }
+
+    /// Delete a branch, refusing if it is not merged into the current one.
+    pub fn delete_branch(&self, branch: &str) -> Result<()> {
+        self.run(&["branch", "-d", branch])?;
+        Ok(())
+    }
+
     /// Changed paths in a working tree, including untracked files.
     pub fn status_porcelain(&self, dir: &Path) -> Result<String> {
         self.run_in(dir, &["status", "--porcelain"])

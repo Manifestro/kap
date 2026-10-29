@@ -72,6 +72,9 @@ pub struct ToolEvent {
     pub stderr_hash: Option<String>,
     pub observed: bool,
     pub occurred_at: String,
+    /// Set when a Claude Code subagent made this call rather than the main agent.
+    pub agent_id: Option<String>,
+    pub agent_type: Option<String>,
 }
 
 /// A choice an agent committed to, with the reasoning behind it.

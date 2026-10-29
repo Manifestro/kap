@@ -1,1 +1,0 @@
-error: KAP is not initialized in `/Users/karl4th/Documents/manifestro/opensource/kap/.kap`; run `kap init`

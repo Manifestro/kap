@@ -99,7 +99,7 @@ impl Repo {
             });
         }
 
-        if !git.status_porcelain(self.root())?.trim().is_empty() {
+        if !git.tracked_changes(self.root())?.trim().is_empty() {
             return Err(Error::MergeDirtyWorktree);
         }
 

@@ -9,6 +9,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Merging failed when the checkout held any untracked file, including files unrelated to the
+  attempt. Only tracked changes block a merge now; git still refuses when an untracked file would
+  be overwritten.
+- `kap attempt clean` kept every branch forever. A branch that is merged into the current one is now
+  deleted with the worktree; an unmerged branch is kept.
+- `kap status` counted only committed changes. It now reports uncommitted and untracked files too.
+- `kap status` in the main checkout now says that hooks record nothing there.
+- `kap merge` no longer leaves a half-merged tree: a conflicted merge is aborted.
+- Three stray files from a test run (`m1bc.txt`, `pc2.txt`, `push2.txt`) were committed by mistake
+  and are removed.
+
 - Hooks could fail the agent's turn: malformed or empty input, a missing session id, or a locked
   database produced a non-zero exit that Claude Code surfaced. Hooks now always exit 0 and record
   the failure in `.kap/logs/hooks.log`.

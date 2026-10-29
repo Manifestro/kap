@@ -1,10 +1,6 @@
 # KAP
 
-**An open-source multi-agent platform for research and development.**
-
-KAP lets autonomous AI agents work on the same problem together: propose hypotheses, run
-experiments, review each other's work, and defend their conclusions inside isolated workspaces.
-Claude Code is supported today; Codex and other harnesses are next.
+**An open-source versioning layer for work done by AI agents — working today with Claude Code.**
 
 Git records *what* changed. KAP records *why*.
 
@@ -14,6 +10,19 @@ Git records *what* changed. KAP records *why*.
 > **Status: pre-alpha.** The loop works end to end with Claude Code: attempts, recorded commands and
 > decisions, evidence, snapshots, review, and merge. The data model and the CLI are still settling,
 > and there are no releases yet — but everything described below runs today.
+
+## Today, and what is planned
+
+KAP is aimed at agents working on the same problem together. That is the goal; this is what the
+current version actually does.
+
+| | Today | Planned |
+| --- | --- | --- |
+| **Harnesses** | Claude Code | Codex and other agents |
+| **Agents per repository** | Several attempts at once, each in its own worktree, each working alone | Agents cooperating on one task |
+| **Review** | `kap review` — whoever runs it approves; nothing distinguishes a person from an agent | Agents reviewing another attempt as a matter of course |
+| **Subagents** | Claude Code subagents are recorded with their identity, but they belong to one run | Cross-run collaboration |
+| **Evidence** | Captured automatically where the harness allows; claims marked as claims | Contracts that tie evidence to a decision |
 
 ## The problem
 
@@ -176,6 +185,10 @@ claude                # work as usual; KAP records what happens
 `kap` is not on `PATH`. Commit `.claude/settings.json` to share the setup with everyone working in
 the repository.
 
+Hooks record only inside an attempt worktree. Run Claude in the main checkout and nothing is
+recorded — `kap status` there says so explicitly. Set the hooks up once per worktree, or commit
+`.claude/settings.json` on the branch every worktree starts from.
+
 When the attempt is done, compare it and decide:
 
 ```sh
@@ -230,6 +243,9 @@ These are known and deliberate for now, not oversights:
 - **Hooks see tool calls, not reasoning.** Claude Code hooks capture tool calls and their output; they
   do not capture prompts, thinking, or model messages. A tool's arguments are recorded for shell
   commands and file edits only.
+- **Review has no identity.** `kap review` records the git user name, so an agent can approve its own
+  work with the same command a person uses. The gate exists; the separation between the worker and
+  the reviewer does not.
 - **Codex is not supported yet.**
 
 ## Repository layout

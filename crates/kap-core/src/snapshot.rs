@@ -5,6 +5,14 @@ use crate::error::{Error, Result};
 use crate::model::{new_id, now_rfc3339, Attempt, AttemptState, Evidence, Snapshot};
 use crate::repo::Repo;
 
+/// What `clean_attempt` removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CleanOutcome {
+    pub worktree_removed: bool,
+    /// Whether the branch was merged and has been deleted.
+    pub branch_deleted: bool,
+}
+
 impl Repo {
     /// Capture the worktree as a snapshot and return it.
     ///
@@ -90,20 +98,44 @@ impl Repo {
         })
     }
 
-    /// Remove the worktree of a closed attempt.
+    /// Remove the worktree of a closed attempt, and its branch once that branch is merged.
     ///
-    /// The branch is kept: it is the record of what the attempt did, and removing it would make
-    /// reviewing or re-merging impossible.
-    pub fn clean_attempt(&self, attempt_id: &str) -> Result<()> {
+    /// A merged branch is safe to delete — its commits are reachable from the main line. An
+    /// unmerged one is kept, because it is the only record of that work.
+    pub fn clean_attempt(&self, attempt_id: &str) -> Result<CleanOutcome> {
         let attempt = self.db()?.attempt(attempt_id)?;
         if attempt.state != AttemptState::Closed {
             return Err(Error::AttemptOpen { id: attempt.id });
         }
 
-        if attempt.worktree.exists() {
-            self.git()?.remove_worktree(&attempt.worktree, true)?;
+        let git = self.git()?;
+        let worktree_removed = attempt.worktree.exists();
+        if worktree_removed {
+            git.remove_worktree(&attempt.worktree, true)?;
         }
-        Ok(())
+
+        let branch_deleted =
+            git.branch_exists(&attempt.branch)? && git.is_ancestor(&attempt.branch, "HEAD")?;
+        if branch_deleted {
+            git.delete_branch(&attempt.branch)?;
+        }
+
+        Ok(CleanOutcome {
+            worktree_removed,
+            branch_deleted,
+        })
+    }
+
+    /// Paths changed but not committed in the attempt's worktree, untracked files included.
+    pub fn worktree_changes(&self, attempt_id: &str) -> Result<Vec<String>> {
+        let attempt = self.db()?.attempt(attempt_id)?;
+        let status = self.git()?.status_porcelain(&attempt.worktree)?;
+        Ok(status
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     /// Record the worktree's changed files as evidence and return how many were new.

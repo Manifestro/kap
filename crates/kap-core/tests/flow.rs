@@ -792,7 +792,7 @@ fn a_snapshot_restores_as_a_new_attempt() {
 }
 
 #[test]
-fn cleaning_removes_a_closed_attempt_but_keeps_its_branch() {
+fn cleaning_keeps_an_unmerged_branch() {
     let (_dir, repo) = repository_with_commit();
     let attempt = repo
         .start_attempt(NewAttempt {
@@ -807,8 +807,15 @@ fn cleaning_removes_a_closed_attempt_but_keeps_its_branch() {
         other => panic!("expected AttemptOpen, got {other:?}"),
     }
 
+    // Work that was never merged is the only record of itself, so the branch must survive.
+    fs::write(attempt.worktree.join("calc.py"), "print(1)\n").expect("write file");
+    git(&attempt.worktree, &["add", "."]);
+    git(&attempt.worktree, &["commit", "-m", "unmerged work"]);
+
     repo.close_attempt(&attempt.id).expect("close");
-    repo.clean_attempt(&attempt.id).expect("clean");
+    let outcome = repo.clean_attempt(&attempt.id).expect("clean");
+    assert!(outcome.worktree_removed);
+    assert!(!outcome.branch_deleted);
     assert!(!attempt.worktree.exists());
     assert!(repo
         .git()
@@ -817,6 +824,67 @@ fn cleaning_removes_a_closed_attempt_but_keeps_its_branch() {
         .expect("branch lookup"));
 }
 
+#[test]
+fn cleaning_a_merged_attempt_also_removes_its_branch() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+    repo.review(&attempt.id, Verdict::Approved, None)
+        .expect("approve");
+    repo.merge_attempt(&attempt.id).expect("merge");
+
+    let outcome = repo.clean_attempt(&attempt.id).expect("clean");
+    assert!(outcome.worktree_removed);
+    assert!(outcome.branch_deleted);
+    assert!(!repo
+        .git()
+        .expect("git")
+        .branch_exists(&attempt.branch)
+        .expect("branch lookup"));
+}
+
+#[test]
+fn untracked_files_do_not_block_a_merge() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = attempt_with_change(&repo);
+    repo.review(&attempt.id, Verdict::Approved, None)
+        .expect("approve");
+
+    // An unrelated stray file used to make merging impossible.
+    fs::write(repo.root().join("notes.local"), "scratch\n").expect("write stray file");
+
+    repo.merge_attempt(&attempt.id).expect("merge");
+    assert!(repo.root().join("calc.py").is_file());
+}
+
+#[test]
+fn a_subagent_tool_call_is_attributed() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "subagent",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let input = HookInput::parse(
+        r#"{"session_id":"s-sub","hook_event_name":"PostToolUse","tool_name":"Bash",
+            "tool_use_id":"toolu_sub","agent_id":"agent-1","agent_type":"Explore",
+            "tool_input":{"command":"ls"},"tool_response":{"stdout":"a.txt\n"}}"#,
+    )
+    .expect("parse");
+
+    let run = repo
+        .run_for_session(&attempt.id, input.session())
+        .expect("run");
+    let event = repo
+        .record_hook_event(&attempt, &run.id, &input, false)
+        .expect("record")
+        .expect("event");
+
+    assert_eq!(event.agent_id.as_deref(), Some("agent-1"));
+    assert_eq!(event.agent_type.as_deref(), Some("Explore"));
+}
 #[test]
 fn history_travels_to_another_clone() {
     let (_dir_a, repo_a) = repository_with_commit();

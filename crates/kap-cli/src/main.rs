@@ -300,8 +300,20 @@ fn run() -> Result<ExitCode, String> {
                 }
                 AttemptCommand::Clean { attempt } => {
                     let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-                    repo.clean_attempt(&attempt_id).map_err(show)?;
-                    println!("Removed the worktree of {attempt_id}; its branch is kept.");
+                    let outcome = repo.clean_attempt(&attempt_id).map_err(show)?;
+                    match (outcome.worktree_removed, outcome.branch_deleted) {
+                        (true, true) => {
+                            println!("Removed the worktree and the merged branch of {attempt_id}.")
+                        }
+                        (true, false) => println!(
+                            "Removed the worktree of {attempt_id}; its branch is unmerged and was \
+                             kept."
+                        ),
+                        (false, true) => {
+                            println!("The worktree was already gone; deleted the merged branch.")
+                        }
+                        (false, false) => println!("Nothing to remove for {attempt_id}."),
+                    }
                     Ok(ExitCode::SUCCESS)
                 }
                 AttemptCommand::Close { attempt } => {
@@ -589,12 +601,17 @@ fn print_event(event: &ToolEvent) {
         Some(code) => format!("  exit {code}"),
         None => String::new(),
     };
+    let agent = match &event.agent_type {
+        Some(kind) => format!("  [subagent: {kind}]"),
+        None => String::new(),
+    };
     println!(
-        "{}  {:<9} {}{}",
+        "{}  {:<9} {}{}{}",
         time_of(&event.occurred_at),
         event.kind,
         summarise(command),
-        outcome
+        outcome,
+        agent
     );
 }
 
@@ -822,6 +839,7 @@ fn print_status(repo: &Repo) -> Result<(), String> {
         Some(attempt_id) => {
             let attempt = repo.attempt(&attempt_id).map_err(show)?;
             let changes = repo.changes_since_base(&attempt_id).map_err(show)?;
+            let uncommitted = repo.worktree_changes(&attempt_id).map_err(show)?;
             let decisions = repo.decisions(&attempt_id).map_err(show)?;
             let evidence = repo.evidence(&attempt_id).map_err(show)?;
             let review = repo.latest_review(&attempt_id).map_err(show)?;
@@ -831,7 +849,11 @@ fn print_status(repo: &Repo) -> Result<(), String> {
             println!("attempt: {}  {}", attempt.id, attempt.state);
             println!("  label:  {}", attempt.label);
             println!("  branch: {}", attempt.branch);
-            println!("  changed files: {}", changes.len());
+            println!(
+                "  changed files: {} since base, {} uncommitted",
+                changes.len(),
+                uncommitted.len()
+            );
             println!("  decisions: {}", decisions.len());
             println!(
                 "  evidence: {observed} observed, {} reported",
@@ -856,6 +878,10 @@ fn print_status(repo: &Repo) -> Result<(), String> {
             println!();
             println!("attempt: none (you are in the main checkout)");
             println!("open attempts: {open}");
+            println!(
+                "note: hooks record only inside an attempt worktree; start one with \
+                 `kap attempt start`."
+            );
         }
     }
 

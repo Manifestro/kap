@@ -32,6 +32,10 @@ pub struct HookInput {
     #[serde(default)]
     pub tool_use_id: Option<String>,
     #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -152,6 +156,8 @@ impl Repo {
             },
             observed: true,
             occurred_at: now_rfc3339(),
+            agent_id: input.agent_id.clone(),
+            agent_type: input.agent_type.clone(),
         };
 
         let db = self.db()?;

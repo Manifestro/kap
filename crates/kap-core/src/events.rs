@@ -74,6 +74,8 @@ impl Repo {
             stderr_hash: Some(objects.put(&stderr)?),
             observed: true,
             occurred_at: now_rfc3339(),
+            agent_id: None,
+            agent_type: None,
         };
 
         self.db()?.insert_tool_event(&event)?;
