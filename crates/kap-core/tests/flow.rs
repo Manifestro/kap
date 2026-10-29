@@ -4,6 +4,7 @@ use std::process::Command;
 
 use kap_core::attempt::NewAttempt;
 use kap_core::decision::NewDecision;
+use kap_core::evidence::{EvidenceSource, NewEvidence};
 use kap_core::model::AttemptState;
 use kap_core::repo::Repo;
 use kap_core::Error;
@@ -361,4 +362,112 @@ fn diff_reports_files_changed_between_attempts() {
     assert_eq!(diff.files[0].added, Some(2));
     assert_eq!(diff.files[0].removed, Some(1));
     assert_eq!(diff.totals(), (2, 1));
+}
+
+#[test]
+fn evidence_with_an_artifact_is_observed() {
+    let (dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "evidence",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    let decision = repo
+        .add_decision(
+            &attempt.id,
+            NewDecision {
+                summary: "Tests pass",
+                rationale: None,
+                alternatives: None,
+            },
+        )
+        .expect("add decision");
+
+    let artifact = dir.path().join("results.txt");
+    fs::write(&artifact, "42 tests passed\n").expect("write artifact");
+
+    let evidence = repo
+        .attach_evidence(
+            &attempt.id,
+            NewEvidence {
+                source: EvidenceSource::TestResult,
+                command: Some("cargo test"),
+                exit_code: Some(0),
+                artifact: Some(&artifact),
+                decision: Some(&decision.id),
+                complete: true,
+            },
+        )
+        .expect("attach evidence");
+
+    assert!(evidence.observed);
+    assert!(evidence.complete);
+    assert_eq!(evidence.decision_id.as_deref(), Some(decision.id.as_str()));
+
+    let stored = repo
+        .objects()
+        .get(evidence.artifact_hash.as_deref().unwrap())
+        .expect("read artifact");
+    assert_eq!(stored, b"42 tests passed\n");
+
+    assert_eq!(repo.evidence(&attempt.id).expect("list evidence").len(), 1);
+}
+
+#[test]
+fn a_claim_without_an_artifact_is_not_evidence() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "claim",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let evidence = repo
+        .attach_evidence(
+            &attempt.id,
+            NewEvidence {
+                source: EvidenceSource::AgentReport,
+                command: None,
+                exit_code: None,
+                artifact: None,
+                decision: None,
+                complete: true,
+            },
+        )
+        .expect("attach evidence");
+
+    assert!(!evidence.observed);
+    assert!(!evidence.complete);
+    assert!(evidence.artifact_hash.is_none());
+}
+
+#[test]
+fn evidence_cannot_reference_a_foreign_decision() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "foreign",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    match repo.attach_evidence(
+        &attempt.id,
+        NewEvidence {
+            source: EvidenceSource::AgentReport,
+            command: None,
+            exit_code: None,
+            artifact: None,
+            decision: Some("decision-missing"),
+            complete: false,
+        },
+    ) {
+        Err(Error::DecisionNotFound { .. }) => {}
+        other => panic!("expected DecisionNotFound, got {other:?}"),
+    }
 }

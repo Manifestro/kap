@@ -40,6 +40,9 @@ pub enum Error {
     #[error("worktree `{path}` already exists")]
     WorktreeExists { path: PathBuf },
 
+    #[error("decision `{id}` not found for attempt `{attempt}`")]
+    DecisionNotFound { id: String, attempt: String },
+
     #[error("attempt `{id}` is closed; its history is frozen")]
     AttemptClosed { id: String },
 

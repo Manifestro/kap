@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
-use crate::model::{Attempt, AttemptState, Decision, ToolEvent};
+use crate::model::{Attempt, AttemptState, Decision, Evidence, ToolEvent};
 
 /// Schema migrations, applied in order. Index `i` upgrades the database to version `i + 1`.
 const MIGRATIONS: &[&str] = &[
@@ -207,6 +207,65 @@ impl Db {
             decisions.push(row.map_err(|e| Error::db(&self.path, e))?);
         }
         Ok(decisions)
+    }
+
+    /// Record an evidence row.
+    pub fn insert_evidence(&self, evidence: &Evidence) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO evidence (id, attempt_id, decision_id, source, command, exit_code, \
+                 artifact_hash, observed, complete, recorded_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    evidence.id,
+                    evidence.attempt_id,
+                    evidence.decision_id,
+                    evidence.source,
+                    evidence.command,
+                    evidence.exit_code,
+                    evidence.artifact_hash,
+                    evidence.observed as i64,
+                    evidence.complete as i64,
+                    evidence.recorded_at,
+                ],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
+    /// Evidence recorded for an attempt, oldest first.
+    pub fn evidence(&self, attempt_id: &str) -> Result<Vec<Evidence>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT id, attempt_id, decision_id, source, command, exit_code, artifact_hash, \
+                 observed, complete, recorded_at FROM evidence \
+                 WHERE attempt_id = ?1 ORDER BY recorded_at ASC, id ASC",
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+
+        let rows = statement
+            .query_map([attempt_id], |row| {
+                Ok(Evidence {
+                    id: row.get("id")?,
+                    attempt_id: row.get("attempt_id")?,
+                    decision_id: row.get("decision_id")?,
+                    source: row.get("source")?,
+                    command: row.get("command")?,
+                    exit_code: row.get("exit_code")?,
+                    artifact_hash: row.get("artifact_hash")?,
+                    observed: row.get::<_, i64>("observed")? != 0,
+                    complete: row.get::<_, i64>("complete")? != 0,
+                    recorded_at: row.get("recorded_at")?,
+                })
+            })
+            .map_err(|e| Error::db(&self.path, e))?;
+
+        let mut evidence = Vec::new();
+        for row in rows {
+            evidence.push(row.map_err(|e| Error::db(&self.path, e))?);
+        }
+        Ok(evidence)
     }
 
     fn migrate(&self) -> Result<()> {

@@ -6,7 +6,8 @@ use clap::{Parser, Subcommand};
 use kap_core::attempt::NewAttempt;
 use kap_core::decision::NewDecision;
 use kap_core::diff::AttemptDiff;
-use kap_core::model::{Attempt, Decision, ToolEvent};
+use kap_core::evidence::{EvidenceSource, NewEvidence};
+use kap_core::model::{Attempt, Decision, Evidence, ToolEvent};
 use kap_core::repo::Repo;
 
 #[derive(Debug, Parser)]
@@ -52,6 +53,11 @@ enum Command {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
+    },
+    /// Attach evidence to an attempt, or list what is attached
+    Evidence {
+        #[command(subcommand)]
+        command: EvidenceCommand,
     },
     /// Compare two attempts
     Diff {
@@ -108,6 +114,61 @@ enum DecisionCommand {
         #[arg(long)]
         attempt: Option<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum EvidenceCommand {
+    /// Store an artifact as evidence, optionally linked to a decision
+    Attach {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+        /// Where the evidence comes from
+        #[arg(long, value_enum)]
+        source: SourceArg,
+        /// File to store and hash as the artifact
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// The command the evidence came from
+        #[arg(long)]
+        command: Option<String>,
+        /// The command's exit code
+        #[arg(long, value_name = "CODE")]
+        exit_code: Option<i32>,
+        /// Decision this evidence supports or undermines
+        #[arg(long, value_name = "ID")]
+        decision: Option<String>,
+        /// Mark the evidence as partial
+        #[arg(long)]
+        incomplete: bool,
+    },
+    /// List the evidence recorded for an attempt
+    List {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum SourceArg {
+    ToolExecution,
+    FileChange,
+    TestResult,
+    AgentReport,
+    ExternalArtifact,
+}
+
+impl From<SourceArg> for EvidenceSource {
+    fn from(arg: SourceArg) -> EvidenceSource {
+        match arg {
+            SourceArg::ToolExecution => EvidenceSource::ToolExecution,
+            SourceArg::FileChange => EvidenceSource::FileChange,
+            SourceArg::TestResult => EvidenceSource::TestResult,
+            SourceArg::AgentReport => EvidenceSource::AgentReport,
+            SourceArg::ExternalArtifact => EvidenceSource::ExternalArtifact,
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -222,6 +283,50 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Evidence { command } => {
+            let repo = open_repo()?;
+            match command {
+                EvidenceCommand::Attach {
+                    attempt,
+                    source,
+                    file,
+                    command: evidence_command,
+                    exit_code,
+                    decision,
+                    incomplete,
+                } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let evidence = repo
+                        .attach_evidence(
+                            &attempt_id,
+                            NewEvidence {
+                                source: source.into(),
+                                command: evidence_command.as_deref(),
+                                exit_code,
+                                artifact: file.as_deref(),
+                                decision: decision.as_deref(),
+                                complete: !incomplete,
+                            },
+                        )
+                        .map_err(show)?;
+                    print_evidence(&evidence);
+                    Ok(ExitCode::SUCCESS)
+                }
+                EvidenceCommand::List { attempt } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let evidence = repo.evidence(&attempt_id).map_err(show)?;
+                    if evidence.is_empty() {
+                        println!("No evidence recorded for {attempt_id}.");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    for entry in &evidence {
+                        print_evidence(entry);
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
+        }
+
         Command::Diff { from, to } => {
             let repo = open_repo()?;
             let diff = repo.diff_attempts(&from, &to).map_err(show)?;
@@ -286,6 +391,26 @@ fn print_decision(decision: &Decision) {
     }
     if let Some(alternatives) = &decision.alternatives {
         println!("              instead of: {alternatives}");
+    }
+}
+
+fn print_evidence(evidence: &Evidence) {
+    let state = match (evidence.observed, evidence.complete) {
+        (true, true) => "observed, complete",
+        (true, false) => "observed, partial",
+        (false, _) => "reported, not observed",
+    };
+    let artifact = evidence.artifact_hash.as_deref().unwrap_or("<no artifact>");
+    println!("{}  {}  {state}  {artifact}", evidence.id, evidence.source);
+    if let Some(command) = &evidence.command {
+        let code = evidence
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!("  command: {command}  -> exit {code}");
+    }
+    if let Some(decision) = &evidence.decision_id {
+        println!("  decision: {decision}");
     }
 }
 

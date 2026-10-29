@@ -88,7 +88,7 @@ decisions are recorded as they happen, and two attempts can be compared before a
 - [x] Tool-event capture: `kap exec` records commands, exit codes, and both output streams
 - [x] Decisions: `kap decision add` records rationale and rejected alternatives
 - [x] Closing an attempt and comparing two attempts with `kap diff`
-- [ ] Evidence attached to decisions, with its completeness marked
+- [x] Evidence attached to decisions, marked observed or merely reported
 - [ ] Snapshots and restore
 - [ ] Adapter interface and a first adapter (Claude Code or Codex)
 - [ ] Review-gated merge
@@ -123,11 +123,19 @@ kap decision add \
   --summary "Normalize trailing commas in the lexer" \
   --rationale "the parser then needs no special case" \
   --alternatives "handle them in the parser"
-kap log                                   # the timeline of both
+kap evidence attach \
+  --source test-result --file results.txt \
+  --command "cargo test" --exit-code 0 \
+  --decision decision-…                   # an artifact is hashed and stored
+kap log                                   # the timeline so far
 ```
 
 Command output is stored by BLAKE3 hash in `.kap/objects/`, so identical output is kept once and a
 hash proves two records saw the same bytes. A failed command is recorded too — it is evidence.
+
+Evidence is never taken on trust. With an artifact, KAP stores and hashes the bytes and marks the
+record **observed**. Without one — an agent saying "it works" — the record is kept as a claim and
+marked **not observed**.
 
 When the attempt is done, close it and compare it with another attempt:
 

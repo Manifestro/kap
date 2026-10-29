@@ -10,6 +10,7 @@ pub mod decision;
 pub mod diff;
 pub mod error;
 pub mod events;
+pub mod evidence;
 pub mod git;
 pub mod model;
 pub mod objects;

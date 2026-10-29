@@ -89,3 +89,20 @@ pub struct Decision {
 pub(crate) fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
 }
+
+/// Observed support for or against a decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evidence {
+    pub id: String,
+    pub attempt_id: String,
+    pub decision_id: Option<String>,
+    pub source: String,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+    pub artifact_hash: Option<String>,
+    /// Whether KAP saw the supporting bytes itself, rather than being told about them.
+    pub observed: bool,
+    /// Whether the evidence is whole; an agent's report is not.
+    pub complete: bool,
+    pub recorded_at: String,
+}

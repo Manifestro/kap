@@ -209,7 +209,7 @@ kap exec -- <command>        # run a command inside an attempt and record it    
 kap log                      # timeline of commands and decisions                 [done]
 kap decision add             # record a decision with rationale and alternatives  [done]
 kap decision list            # decisions recorded for an attempt                  [done]
-kap evidence attach          # attach an artifact as evidence
+kap evidence attach          # attach an artifact as evidence                 [done]
 kap snapshot                 # snapshot the current state of an attempt
 kap diff <a> <b>             # compare two attempts                              [done]
 kap review <attempt>         # inspect diff + evidence before merging
