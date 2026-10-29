@@ -62,6 +62,12 @@ impl Git {
         }
     }
 
+    /// Whether the repository has any commit yet.
+    pub fn has_head(&self) -> Result<bool> {
+        let output = self.output(&["rev-parse", "--verify", "--quiet", "HEAD"])?;
+        Ok(output.status.success())
+    }
+
     /// The commit `HEAD` points at.
     pub fn head_commit(&self) -> Result<String> {
         Ok(self.run(&["rev-parse", "HEAD"])?.trim().to_string())

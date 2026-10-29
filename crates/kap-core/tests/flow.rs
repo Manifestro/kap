@@ -1105,3 +1105,36 @@ fn a_malformed_object_address_is_an_error_not_a_panic() {
         );
     }
 }
+
+#[test]
+fn starting_an_attempt_needs_a_first_commit() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    git(dir.path(), &["init"]);
+    git(dir.path(), &["config", "user.name", "KAP Test"]);
+    git(dir.path(), &["config", "user.email", "test@example.com"]);
+
+    let repo = Repo::init(dir.path()).expect("initializing works without commits");
+    match repo.start_attempt(NewAttempt {
+        label: "too early",
+        task: None,
+        base: None,
+    }) {
+        Err(Error::EmptyRepository) => {}
+        other => panic!("expected EmptyRepository, got {other:?}"),
+    }
+}
+
+#[test]
+fn init_outside_a_repository_reports_the_resolved_path() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+
+    match Repo::init(dir.path()) {
+        Err(Error::NotAGitRepository { path }) => {
+            assert!(
+                path.is_absolute(),
+                "the message should name a real path: {path:?}"
+            );
+        }
+        other => panic!("expected NotAGitRepository, got {other:?}"),
+    }
+}

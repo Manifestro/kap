@@ -5,6 +5,11 @@ use thiserror::Error;
 /// Errors raised by the KAP core.
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error(
+        "the repository has no commits yet; make an initial commit before starting an attempt"
+    )]
+    EmptyRepository,
+
     #[error("`{path}` is not inside a git repository")]
     NotAGitRepository { path: PathBuf },
 

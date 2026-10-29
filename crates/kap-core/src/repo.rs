@@ -24,6 +24,7 @@ impl Repo {
     /// Fails if KAP is already initialized there, so an existing history is never clobbered by
     /// accident.
     pub fn init(path: &Path) -> Result<Repo> {
+        let path = &path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let git = Git::discover(path)?;
         let repo = Repo {
             root: git.main_root()?,

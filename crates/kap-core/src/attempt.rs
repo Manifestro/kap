@@ -24,7 +24,12 @@ impl Repo {
         let git = self.git()?;
         let base_commit = match new.base {
             Some(rev) => git.resolve_commit(rev)?,
-            None => git.head_commit()?,
+            None => {
+                if !git.has_head()? {
+                    return Err(Error::EmptyRepository);
+                }
+                git.head_commit()?
+            }
         };
 
         let id = format!("attempt-{}", new_id());
