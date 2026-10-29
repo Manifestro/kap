@@ -101,7 +101,9 @@ recorded, the state can be snapshotted and restored, and the result is merged on
 
 ## Getting started
 
-KAP is built from source. You need [Rust](https://rustup.rs/) and `git`.
+Prebuilt binaries for macOS (Apple silicon and Intel) and Linux x86_64 are attached to every
+[release](https://github.com/Manifestro/kap/releases). Or build from source — you need
+[Rust](https://rustup.rs/) and `git`:
 
 ```sh
 git clone https://github.com/Manifestro/kap.git

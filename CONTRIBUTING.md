@@ -76,6 +76,10 @@ By submitting a pull request you agree that your contribution is licensed under 
 Do not open a public issue for a vulnerability. [SECURITY.md](SECURITY.md) explains the private
 reporting channel and what is in scope.
 
+## Releasing
+
+Release steps live in [docs/RELEASING.md](docs/RELEASING.md). Only maintainers cut releases.
+
 ## Questions
 
 Open a discussion or an issue. There is no separate mailing list or chat yet.

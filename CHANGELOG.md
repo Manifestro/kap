@@ -35,3 +35,6 @@ shared with another machine.
   `PostToolUseFailure`, and `Stop`, so KAP listens without owning the agent's loop.
 - Append-only SQLite schema with versioned migrations, and a CI job that runs formatting, lints, and
   tests on every push and pull request.
+
+[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Manifestro/kap/releases/tag/v0.1.0
