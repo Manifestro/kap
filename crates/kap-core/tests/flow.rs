@@ -704,7 +704,7 @@ fn an_approved_attempt_merges_and_closes() {
     let review = repo
         .review(&attempt.id, Verdict::Approved, Some("small and tested"))
         .expect("approve");
-    assert!(review.head_commit.starts_with(&attempt.base_commit[..4]) == false);
+    assert_ne!(review.head_commit, attempt.base_commit);
     assert_eq!(
         repo.latest_review(&attempt.id).unwrap().unwrap().verdict,
         "approved"
