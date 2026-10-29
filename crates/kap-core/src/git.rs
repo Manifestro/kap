@@ -83,6 +83,11 @@ impl Git {
         Ok(output.status.success())
     }
 
+    /// A machine-readable diff between two revisions: one `added\tremoved\tpath` line per file.
+    pub fn diff_numstat(&self, from: &str, to: &str) -> Result<String> {
+        self.run(&["diff", "--numstat", from, to])
+    }
+
     /// Create a worktree at `path` on a new branch based on `base`.
     pub fn add_worktree(&self, path: &Path, branch: &str, base: &str) -> Result<()> {
         let path = path.to_string_lossy().to_string();

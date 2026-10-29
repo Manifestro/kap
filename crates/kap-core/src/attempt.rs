@@ -57,6 +57,20 @@ impl Repo {
         Ok(attempt)
     }
 
+    /// Close an attempt, freezing its history.
+    ///
+    /// Closing an already closed attempt is a no-op, so a retried command is harmless.
+    pub fn close_attempt(&self, attempt_id: &str) -> Result<Attempt> {
+        let db = self.db()?;
+        let attempt = db.attempt(attempt_id)?;
+        if attempt.state == AttemptState::Closed {
+            return Ok(attempt);
+        }
+
+        db.close_attempt(attempt_id, &now_rfc3339())?;
+        db.attempt(attempt_id)
+    }
+
     /// All attempts, newest first.
     pub fn attempts(&self) -> Result<Vec<Attempt>> {
         self.db()?.attempts()

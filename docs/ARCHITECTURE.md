@@ -203,7 +203,7 @@ An adapter must never be required for reading history.
 ```text
 kap init                     # create .kap/ in a repository                        [done]
 kap attempt start            # open a new attempt (worktree + branch)              [done]
-kap attempt close            # close an attempt and freeze its history
+kap attempt close            # close an attempt and freeze its history          [done]
 kap attempt list             # list attempts and their state                      [done]
 kap exec -- <command>        # run a command inside an attempt and record it      [done]
 kap log                      # timeline of commands and decisions                 [done]
@@ -211,7 +211,7 @@ kap decision add             # record a decision with rationale and alternatives
 kap decision list            # decisions recorded for an attempt                  [done]
 kap evidence attach          # attach an artifact as evidence
 kap snapshot                 # snapshot the current state of an attempt
-kap diff <a> <b>             # compare two attempts
+kap diff <a> <b>             # compare two attempts                              [done]
 kap review <attempt>         # inspect diff + evidence before merging
 kap merge <attempt>          # merge an attempt, only after review
 kap restore <snapshot>       # restore a recorded state

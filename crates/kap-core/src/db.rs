@@ -91,6 +91,17 @@ impl Db {
         Ok(attempts)
     }
 
+    /// Mark an attempt closed. Only the lifecycle fields change; the recorded history is untouched.
+    pub fn close_attempt(&self, id: &str, closed_at: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE attempts SET state = 'closed', closed_at = ?2 WHERE id = ?1",
+                rusqlite::params![id, closed_at],
+            )
+            .map_err(|e| Error::db(&self.path, e))?;
+        Ok(())
+    }
+
     /// Record a tool event.
     pub fn insert_tool_event(&self, event: &ToolEvent) -> Result<()> {
         self.conn

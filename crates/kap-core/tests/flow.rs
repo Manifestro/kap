@@ -279,3 +279,86 @@ fn open_inside_a_worktree_finds_the_main_store() {
     assert_eq!(inside.root(), repo.root());
     assert_eq!(inside.attempts().expect("list attempts").len(), 1);
 }
+
+#[test]
+fn closing_an_attempt_freezes_its_state() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "close me",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+
+    let closed = repo.close_attempt(&attempt.id).expect("close attempt");
+    assert_eq!(closed.state, AttemptState::Closed);
+    assert!(closed.closed_at.is_some());
+
+    // Closing twice changes nothing.
+    let again = repo.close_attempt(&attempt.id).expect("close again");
+    assert_eq!(again.closed_at, closed.closed_at);
+    assert_eq!(
+        repo.attempts().expect("list")[0].state,
+        AttemptState::Closed
+    );
+}
+
+#[test]
+fn a_closed_attempt_rejects_new_commands() {
+    let (_dir, repo) = repository_with_commit();
+    let attempt = repo
+        .start_attempt(NewAttempt {
+            label: "frozen",
+            task: None,
+            base: None,
+        })
+        .expect("start attempt");
+    repo.close_attempt(&attempt.id).expect("close attempt");
+
+    let error = repo
+        .exec(&attempt.id, &["echo".to_string(), "late".to_string()])
+        .expect_err("exec must fail on a closed attempt");
+    assert!(matches!(error, Error::AttemptClosed { .. }));
+}
+
+#[test]
+fn diff_reports_files_changed_between_attempts() {
+    let (_dir, repo) = repository_with_commit();
+    let first = repo
+        .start_attempt(NewAttempt {
+            label: "first",
+            task: None,
+            base: None,
+        })
+        .expect("start first");
+    let second = repo
+        .start_attempt(NewAttempt {
+            label: "second",
+            task: None,
+            base: None,
+        })
+        .expect("start second");
+
+    fs::write(first.worktree.join("parser.rs"), "fn parse() {}\n").expect("write first");
+    git(&first.worktree, &["add", "."]);
+    git(&first.worktree, &["commit", "-m", "parser"]);
+
+    fs::write(
+        second.worktree.join("parser.rs"),
+        "fn parse() { /* commas */ }\nfn more() {}\n",
+    )
+    .expect("write second");
+    git(&second.worktree, &["add", "."]);
+    git(&second.worktree, &["commit", "-m", "trailing commas"]);
+
+    let diff = repo
+        .diff_attempts(&first.id, &second.id)
+        .expect("diff attempts");
+
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].path, "parser.rs");
+    assert_eq!(diff.files[0].added, Some(2));
+    assert_eq!(diff.files[0].removed, Some(1));
+    assert_eq!(diff.totals(), (2, 1));
+}

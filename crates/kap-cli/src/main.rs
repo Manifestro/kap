@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use kap_core::attempt::NewAttempt;
 use kap_core::decision::NewDecision;
+use kap_core::diff::AttemptDiff;
 use kap_core::model::{Attempt, Decision, ToolEvent};
 use kap_core::repo::Repo;
 
@@ -52,6 +53,13 @@ enum Command {
         #[arg(long)]
         attempt: Option<String>,
     },
+    /// Compare two attempts
+    Diff {
+        /// The attempt to compare from
+        from: String,
+        /// The attempt to compare to
+        to: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -66,6 +74,12 @@ enum AttemptCommand {
         /// Commit or ref to branch from (defaults to HEAD)
         #[arg(long, value_name = "REV")]
         base: Option<String>,
+    },
+    /// Close an attempt and freeze its history
+    Close {
+        /// Attempt id (inferred from the worktree you are in when omitted)
+        #[arg(long)]
+        attempt: Option<String>,
     },
     /// List attempts, newest first
     List,
@@ -126,6 +140,12 @@ fn run() -> Result<ExitCode, String> {
                         })
                         .map_err(show)?;
                     print_attempt(&attempt);
+                    Ok(ExitCode::SUCCESS)
+                }
+                AttemptCommand::Close { attempt } => {
+                    let attempt_id = require_attempt(&repo, attempt.as_deref())?;
+                    let closed = repo.close_attempt(&attempt_id).map_err(show)?;
+                    println!("{}  {}", closed.id, closed.state);
                     Ok(ExitCode::SUCCESS)
                 }
                 AttemptCommand::List => {
@@ -201,6 +221,13 @@ fn run() -> Result<ExitCode, String> {
             print_log(&repo, &attempt_id)?;
             Ok(ExitCode::SUCCESS)
         }
+
+        Command::Diff { from, to } => {
+            let repo = open_repo()?;
+            let diff = repo.diff_attempts(&from, &to).map_err(show)?;
+            print_diff(&diff);
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -260,6 +287,29 @@ fn print_decision(decision: &Decision) {
     if let Some(alternatives) = &decision.alternatives {
         println!("              instead of: {alternatives}");
     }
+}
+
+fn print_diff(diff: &AttemptDiff) {
+    println!("{} -> {}", diff.from.id, diff.to.id);
+    if diff.is_empty() {
+        println!("No file changes between the two attempts.");
+        return;
+    }
+
+    for file in &diff.files {
+        let added = file
+            .added
+            .map(|n| format!("+{n}"))
+            .unwrap_or_else(|| "+?".to_string());
+        let removed = file
+            .removed
+            .map(|n| format!("-{n}"))
+            .unwrap_or_else(|| "-?".to_string());
+        println!("  {added:>7} {removed:>7}  {}", file.path);
+    }
+
+    let (added, removed) = diff.totals();
+    println!("{} file(s) changed, +{added} -{removed}", diff.files.len());
 }
 
 fn print_attempt(attempt: &Attempt) {

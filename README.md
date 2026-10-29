@@ -77,8 +77,8 @@ it and the evidence that backs it.
 
 ## Status
 
-Pre-alpha. The first vertical slice works: `kap init` creates the store, and `kap attempt start`
-gives an attempt its own branch and worktree while recording it.
+Pre-alpha. The recording half works: an attempt gets its own branch and worktree, commands and
+decisions are recorded as they happen, and two attempts can be compared before anything is merged.
 
 - [x] Repository, license, and contribution guide
 - [x] Architecture and core concepts documented
@@ -87,8 +87,9 @@ gives an attempt its own branch and worktree while recording it.
 - [x] Worktree-based isolation, `kap init`, `kap attempt start`, `kap attempt list`
 - [x] Tool-event capture: `kap exec` records commands, exit codes, and both output streams
 - [x] Decisions: `kap decision add` records rationale and rejected alternatives
+- [x] Closing an attempt and comparing two attempts with `kap diff`
 - [ ] Evidence attached to decisions, with its completeness marked
-- [ ] Snapshots, diff between attempts, and restore
+- [ ] Snapshots and restore
 - [ ] Adapter interface and a first adapter (Claude Code or Codex)
 - [ ] Review-gated merge
 - [ ] `kap push` / `kap pull` over a separate git ref namespace
@@ -127,6 +128,13 @@ kap log                                   # the timeline of both
 
 Command output is stored by BLAKE3 hash in `.kap/objects/`, so identical output is kept once and a
 hash proves two records saw the same bytes. A failed command is recorded too — it is evidence.
+
+When the attempt is done, close it and compare it with another attempt:
+
+```sh
+kap attempt close                         # freezes the attempt; a closed attempt records nothing more
+kap diff attempt-… attempt-…              # files changed between two attempts, not their bases
+```
 
 
 ## Repository layout
