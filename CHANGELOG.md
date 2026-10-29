@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.4-test-1] - 2026-10-30
+## [0.1.4] - 2026-10-30
 
 ### Added
 
@@ -38,7 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `kap attempt clean` counted shared links and setup output such as `.venv` as files you would
   lose, and could reach through a link while deleting the worktree. Links are now removed first.
 
-## [0.1.3] - 2026-10-30
+## 0.1.3 - never released; its changes ship in 0.1.4
 
 ### Added
 
@@ -162,8 +162,8 @@ shared with another machine.
 - Append-only SQLite schema with versioned migrations, and a CI job that runs formatting, lints, and
   tests on every push and pull request.
 
-[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/Manifestro/kap/compare/v0.1.2...v0.1.3
+[Unreleased]: https://github.com/Manifestro/kap/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Manifestro/kap/compare/v0.1.2...v0.1.4
 [0.1.2]: https://github.com/Manifestro/kap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Manifestro/kap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Manifestro/kap/releases/tag/v0.1.0
