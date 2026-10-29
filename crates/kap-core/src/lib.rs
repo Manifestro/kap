@@ -8,7 +8,6 @@ pub mod attempt;
 pub mod db;
 pub mod decision;
 pub mod diff;
-pub mod dsh;
 pub mod error;
 pub mod events;
 pub mod evidence;

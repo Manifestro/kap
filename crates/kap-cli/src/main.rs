@@ -76,11 +76,6 @@ enum Command {
         #[command(subcommand)]
         command: EvidenceCommand,
     },
-    /// Import history recorded by an agent harness
-    Import {
-        #[command(subcommand)]
-        command: ImportCommand,
-    },
     /// Share this repository's history through a git remote
     Push {
         /// Git remote to push to
@@ -177,25 +172,6 @@ enum DecisionCommand {
         /// Attempt id (inferred from the worktree you are in when omitted)
         #[arg(long)]
         attempt: Option<String>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ImportCommand {
-    /// Import DeepSeek Harness sessions
-    Dsh {
-        /// Attempt to import into (defaults to the attempt you are in)
-        #[arg(long)]
-        attempt: Option<String>,
-        /// A session log to import, or `latest`
-        #[arg(long)]
-        session: Option<String>,
-        /// Keep importing new sessions on every kap command
-        #[arg(long)]
-        auto: bool,
-        /// Stop importing automatically
-        #[arg(long)]
-        no_auto: bool,
     },
 }
 
@@ -475,65 +451,6 @@ fn run() -> Result<ExitCode, String> {
                 }
             }
         }
-
-        Command::Import { command } => match command {
-            ImportCommand::Dsh {
-                attempt,
-                session,
-                auto,
-                no_auto,
-            } => {
-                let repo = open_repo()?;
-                let attempt_id = require_attempt(&repo, attempt.as_deref())?;
-
-                if no_auto {
-                    repo.set_dsh_auto(false, None).map_err(show)?;
-                    println!("Automatic DSH import is off.");
-                    return Ok(ExitCode::SUCCESS);
-                }
-
-                if auto {
-                    repo.set_dsh_auto(true, Some(&attempt_id)).map_err(show)?;
-                }
-
-                match session.as_deref() {
-                    Some("latest") => {
-                        let logs = repo.dsh_sessions().map_err(show)?;
-                        let Some(latest) = logs.first() else {
-                            println!("No DSH sessions for this workspace.");
-                            return Ok(ExitCode::SUCCESS);
-                        };
-                        let events = repo.import_dsh_session(&attempt_id, latest).map_err(show)?;
-                        println!(
-                            "Imported {events} event(s) from {} into {attempt_id}.",
-                            latest.display()
-                        );
-                    }
-                    Some(path) => {
-                        let log = PathBuf::from(path);
-                        let events = repo.import_dsh_session(&attempt_id, &log).map_err(show)?;
-                        println!(
-                            "Imported {events} event(s) from {} into {attempt_id}.",
-                            log.display()
-                        );
-                    }
-                    None => {
-                        let report = repo.import_dsh_new(&attempt_id).map_err(show)?;
-                        println!(
-                            "Imported {} event(s) from {} session(s) into {attempt_id}.",
-                            report.events, report.sessions
-                        );
-                    }
-                }
-
-                if auto {
-                    println!(
-                        "Automatic import is on: new sessions arrive with the next kap command."
-                    );
-                }
-                Ok(ExitCode::SUCCESS)
-            }
-        },
 
         Command::Install => {
             let path = install_hooks()?;
@@ -1210,12 +1127,7 @@ fn print_attempt(attempt: &Attempt) {
 
 fn open_repo() -> Result<Repo, String> {
     let cwd = std::env::current_dir().map_err(show)?;
-    let repo = Repo::open(&cwd).map_err(show)?;
-
-    // Automatic harness import must never get in the way of the command being run.
-    let _ = repo.auto_import_dsh();
-
-    Ok(repo)
+    Repo::open(&cwd).map_err(show)
 }
 
 /// The attempt to operate on: the one asked for, or the one whose worktree we are inside.
