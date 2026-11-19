@@ -16,7 +16,7 @@ categories = ["development-tools", "command-line-utilities"]
 kap-core = { path = "crates/kap-core", version = "0.1.4" }
 
 clap = { version = "4", features = ["derive"] }
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 ulid = "3"
